@@ -1,10 +1,12 @@
-import bpy, re
+import bpy, re, os, glob
 from mathutils import Vector
 
 print("start")
 
 filename = "M_Base_Trim.T3D"
+export_dir = "F:\Art\Assets"
 filename = bpy.path.abspath("//" + filename)
+export_dir = os.path.normpath(export_dir)
 
 t3d_block = re.compile(r"( *)Begin\s+(\w+)\s+(?:Class=(.+?)\s+)?Name=\"(.+?)\"(.*?)\r?\n\1End\s+\2", re.DOTALL | re.IGNORECASE)
 block_parameters = re.compile(r"(\w+(?:\(\d+\))?)\s*=\s*(.+?)\r?\n", re.MULTILINE)
@@ -33,16 +35,15 @@ UE2BlenderNode_dict = {
     'MaterialExpressionLinearInterpolate' : UE2BlenderNodeMapping('ShaderNodeMixRGB', label="Lerp", inputs={'A':1,'B':2,'Alpha':0}),
     'MaterialExpressionClamp' : UE2BlenderNodeMapping('ShaderNodeClamp', inputs={'Input':0,'Min':1,'Max':2}),
     'MaterialExpressionTextureSampleParameter2D' : UE2BlenderNodeMapping('ShaderNodeTexImage', hide=False, inputs={'Coordinates':0}),
-    'MaterialExpressionTextureCoordinate' : UE2BlenderNodeMapping('ShaderNodeTexCoord', hide=False),
+    'MaterialExpressionTextureCoordinate' : UE2BlenderNodeMapping('ShaderNodeUVMap', hide=False),
     'MaterialExpressionDesaturation' : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='Desaturation', inputs={'Input':0,'Fraction':1}),
     'MaterialExpressionComment' : UE2BlenderNodeMapping('NodeFrame'),
     'CheapContrast_RGB' : UE2BlenderNodeMapping('ShaderNodeBrightContrast', hide=False, inputs={'FunctionInputs(0)':'Color','FunctionInputs(1)':'Contrast'}),
     'BlendAngleCorrectedNormals' : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='BlendAngleCorrectedNormals', hide=False, inputs={'FunctionInputs(0)':0,'FunctionInputs(1)':1}),
 }
 class_blacklist = { 'SceneThumbnailInfoWithPrimitive' }
-
-param_x = "MaterialExpressionEditorX"
-param_y = "MaterialExpressionEditorY"
+param_x = 'MaterialExpressionEditorX'
+param_y = 'MaterialExpressionEditorY'
 
 def SetupNode(name, mapping):
     node = mat.node_tree.nodes.new(mapping.bl_idname)
@@ -56,20 +57,23 @@ def SetupNode(name, mapping):
     if mapping.bl_idname == 'ShaderNodeTexImage':
         rgba = mat.node_tree.nodes.new('ShaderNodeGroup')
         rgba.node_tree = bpy.data.node_groups['RGBA']
+        rgba.hide = True
         mat.node_tree.links.new(node.outputs['Color'], rgba.inputs['RGB'])
         mat.node_tree.links.new(node.outputs['Alpha'], rgba.inputs['A'])
         link_indirection[name] = rgba.outputs
     return node
+def ParseParams(text, regex=block_parameters): return { m.group(1): m.group(2) for m in regex.finditer(text) }
+def SetPos(node, param_x, param_y, params):
+    if param_x in params and param_y in params: node.location = (int(params[param_x]), -int(params[param_y]))
 def LinkSocket(mat, nodes, node, paramName, expression_text, socket_mapping):
-    socket_params = {}
-    for m in inline_parameter.finditer(expression_text.strip("()")): socket_params[m.group(1)] = m.group(2)
+    socket_params = ParseParams(expression_text.strip("()"), inline_parameter)
     #print(socket_params)
 
     key = 'Expression' if 'Expression' in socket_params else 'Input' # TODO: more robust
 
     m = parse_socket_expression.match(socket_params[key])
     if m:
-        link_node_type = m.group(1)
+        #link_node_type = m.group(1)
         link_mat = m.group(2)
         link_node_name = m.group(3)
         if not link_mat or link_mat == mat.name:
@@ -78,37 +82,45 @@ def LinkSocket(mat, nodes, node, paramName, expression_text, socket_mapping):
                 link_node = nodes[link_node_name]
                 src_socket = None
                 dst_socket = None
+                src_index = 0
                 #if link_node_name == 'MaterialExpressionVectorParameter_2': print(socket_params)
 
-                src_index = 0
-                
                 if 'OutputIndex' in socket_params: src_index = int(socket_params['OutputIndex'])
-                
-                match link_node_type:
-                    case "MaterialExpressionTextureCoordinate": src_index = 'Generated'
 
                 if link_node.name in link_indirection: outputs = link_indirection[link_node.name]
                 else: outputs = link_node.outputs
                 src_socket = outputs[src_index]
 
                 if paramName in socket_mapping: dst_socket = node.inputs[socket_mapping[paramName]]
-                else: print("UNKNOWN PARAM: " + node.name + "." + paramName)
+                else: print(f"UNKNOWN PARAM: {node.name}.{paramName}")
 
                 if src_socket and dst_socket: mat.node_tree.links.new(src_socket, dst_socket)
-                else: print("FAILED LINK: " + node.name + "." + paramName)
-            else: print("MISSING NODE: " + str(link_node_name))
-        else: print("UNKNOWN MAT: " + str(link_mat))
-    else: print("FAILED LINK, PARSE FAIL: " + expression_text)
+                else: print(f"FAILED LINK: {node.name}.{paramName}")
+            else: print(f"MISSING NODE: {str(link_node_name)}")
+        else: print(f"UNKNOWN MAT: {str(link_mat)}")
+    else: print(f"FAILED LINK, PARSE FAIL: {expression_text}")
+def LinkSockets(mat, nodes, node, classpath, params):
+    if classpath in UE2BlenderNode_dict:
+        mapping = UE2BlenderNode_dict[classpath]
+        inputs = mapping.inputs
+        if inputs:
+            for ue_socket_name in inputs:
+                if ue_socket_name in params:
+                    try:
+                        LinkSocket(mat, nodes, node, ue_socket_name, params[ue_socket_name], mapping.inputs)
+                    except Exception as e:
+                        print(f"LINK EXCEPTION: {node.name}.{ue_socket_name}")
+                        print(e)
+                        pass
 
-with open(filename, 'r') as file:
-    t3d_text = file.read()
+with open(filename, 'r') as file: t3d_text = file.read()
 
 header = t3d_block.match(t3d_text)
 if header:
     type = header.group(2)
     classpath = header.group(3)
 
-    if type == "Object" and classpath == "/Script/Engine.Material":
+    if type == 'Object' and classpath == '/Script/Engine.Material':
         mat_name = header.group(4)
         object_body = header.group(5)
 
@@ -119,6 +131,7 @@ if header:
         nodes = {}
         node_classes = {}
         link_indirection = {}
+        nodes_params = {}
 
         for m_object in t3d_block.finditer(object_body):
             #type = m_object.group(2)
@@ -128,14 +141,13 @@ if header:
             if classpath:
                 classpath = classpath.split('.')[-1]
                 node_classes[name] = classpath # TODO: move into some kind of class?
-
                 if classpath in class_blacklist: continue
 
                 isnt_fnc = classpath != 'MaterialExpressionMaterialFunctionCall'
                 
                 if classpath in UE2BlenderNode_dict: mapping = UE2BlenderNode_dict[classpath]
                 elif isnt_fnc:
-                    print("UNKNOWN CLASS: " + classpath)
+                    print(f"UNKNOWN CLASS: {classpath}")
                     mapping = default_mapping
                 
                 if isnt_fnc: nodes[name] = SetupNode(name, mapping)
@@ -146,24 +158,20 @@ if header:
 
                 if name in nodes:
                     body = m_object.group(5)
-                    params = {} # TODO: unified method
-                    for m in block_parameters.finditer(body): params[m.group(1)] = m.group(2)
+                    params = ParseParams(body)
                     #print(params)
 
                     if classpath == 'MaterialExpressionMaterialFunctionCall':
-                        classpath = params['MaterialFunction'].split('.')[-1].strip('\"\'')
-                        mapping = UE2BlenderNode_dict[classpath]
-                        nodes[name] = node = SetupNode(name, mapping)
-                    else:
-                        node = nodes[name]
+                        node_classes[name] = classpath = params['MaterialFunction'].split('.')[-1].strip('\"\'')
+                        nodes[name] = node = SetupNode(name, UE2BlenderNode_dict[classpath])
+                    else: node = nodes[name]
                     
-                    if param_x in params and param_y in params: node.location = (int(params[param_x]), -int(params[param_y])) # TODO: unify
+                    SetPos(node, param_x, param_y, params)
                     if 'SizeX' in params and 'SizeY' in params:
                         node.width = int(params['SizeX'])
                         node.height = int(params['SizeY'])
                     if 'Text' in params: node.label = params['Text'].strip('\"')
                     elif 'ParameterName' in params: node.label = params['ParameterName'].strip('\"')
-
                     if 'DefaultValue' in params: # TODO: move to mapping class?
                         valueStr = params['DefaultValue']
                         match classpath:
@@ -176,47 +184,35 @@ if header:
                                 #node.outputs[0].default_value = (float(m.group(1)), float(m.group(2)), float(m.group(3)), float(m.group(4)))
                             case 'MaterialExpressionStaticSwitchParameter':
                                 node.inputs['Fac'].default_value = 1 if valueStr == "True" else 0
-                    
-                    if name in link_indirection:
-                        link_indirection[name].data.location = node.location + Vector((200,0))
+                    if 'CoordinateIndex' in params:
+                        obj = bpy.context.object # TODO: less fragile?
+                        node.uv_map = obj.data.uv_layers.keys()[int(params['CoordinateIndex'])]
+                    if 'Texture' in params:
+                        m = parse_socket_expression.match(params['Texture'])
+                        #texture_type = m.group(1)
+                        base_path = os.path.join(export_dir, os.path.normpath(m.group(3).lstrip('/').split('.')[0]))
+                        potential_paths = glob.glob(base_path + ".*")
+                        if len(potential_paths) > 0:
+                            texture_path = potential_paths[0]
+                            print(texture_path)
+                            node.image = bpy.data.images.load(texture_path)
+                        else: print(f"Missing Texture \"{base_path}\"")
 
-                    if classpath in UE2BlenderNode_dict:
-                        mapping = UE2BlenderNode_dict[classpath]
-                        # TODO: unify
-                        inputs = mapping.inputs
-                        if inputs:
-                            for ue_socket_name in inputs:
-                                if ue_socket_name in params:
-                                    try:
-                                        LinkSocket(mat, nodes, node, ue_socket_name, params[ue_socket_name], mapping.inputs)
-                                    except Exception as e:
-                                        print("LINK EXCEPTION: " + node.name + "." + ue_socket_name)
-                                        print(e)
-                                        pass
-                else:
-                    print("NODE NOT FOUND: " + name)
-        #print(object_body[m_object.end(0):])
-        #print(m_object)
+                    if name in link_indirection: link_indirection[name].data.location = node.location + Vector((100,30))
+
+                    #LinkSockets(mat, nodes, node, classpath, params)
+                    nodes_params[name] = params
+                else: print("NODE NOT FOUND: " + name)
+        
+        for name in nodes_params:
+            node = nodes[name]
+            classpath = node_classes[name]
+            LinkSockets(mat, nodes, node, classpath, nodes_params[name])
 
         mat_remaining_text = object_body[m_object.end(0):]
-        params = {} # TODO: unified method
-        for m in block_parameters.finditer(mat_remaining_text): params[m.group(1)] = m.group(2)
-        #print(params)
-
-        node = mat.node_tree.nodes["Principled BSDF"]
-        if 'EditorX' in params and 'EditorY' in params: node.location = (int(params['EditorX']), -int(params['EditorY']))
-        mat.node_tree.nodes["Material Output"].location = node.location + Vector((300,0))
-
-        mapping = UE2BlenderNode_dict['Material']
-        # TODO: unify
-        inputs = mapping.inputs
-        if inputs:
-            for ue_socket_name in inputs:
-                if ue_socket_name in params:
-                    #try:
-                    LinkSocket(mat, nodes, node, ue_socket_name, params[ue_socket_name], mapping.inputs)
-                    #except Exception as e:
-                        #print("LINK EXCEPTION: " + node.name + "." + ue_socket_name)
-                        #print(e)
-                        #pass
+        params = ParseParams(mat_remaining_text)
+        node = mat.node_tree.nodes['Principled BSDF']
+        SetPos(node, 'EditorX', 'EditorY', params)
+        mat.node_tree.nodes['Material Output'].location = node.location + Vector((300,0))
+        LinkSockets(mat, nodes, node, 'Material', params)
 print("done")
