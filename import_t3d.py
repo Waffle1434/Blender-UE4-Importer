@@ -1,7 +1,7 @@
 import bpy, re, os, glob, time, pathlib
 from mathutils import *
 from bpy_extras.io_utils import ImportHelper
-from bpy.props import StringProperty, BoolProperty, EnumProperty
+from bpy.props import *
 from bpy.types import Operator
 
 #filename = "M_Base_Trim.T3D"
@@ -9,6 +9,7 @@ filename = "MI_Trim_A_Red2.T3D"
 export_dir = "F:\Art\Assets"
 filename = bpy.path.abspath("//" + filename)
 export_dir = os.path.normpath(export_dir)
+logging = False
 
 
 t3d_block = re.compile(r"( *)Begin\s+(\w+)\s+(?:Class=(.+?)\s+)?Name=\"(.+?)\"(.*?)\r?\n\1End\s+\2", re.DOTALL | re.IGNORECASE)
@@ -47,8 +48,9 @@ UE2BlenderNode_dict = {
     'MaterialExpressionMultiply' : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='MULTIPLY', inputs={'A':0,'B':1}),
     'MaterialExpressionConstant' : UE2BlenderNodeMapping('ShaderNodeValue', hide=False),
     'MaterialExpressionScalarParameter' : UE2BlenderNodeMapping('ShaderNodeValue', hide=False),
+    'MaterialExpressionConstant3Vector' : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='RGBA', hide=False, outputs={'RGB':0,'R':1,'G':2,'B':3,'A':4}),
     'MaterialExpressionVectorParameter' : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='RGBA', hide=False, outputs={'RGB':0,'R':1,'G':2,'B':3,'A':4}),
-    'MaterialExpressionStaticSwitchParameter' : UE2BlenderNodeMapping('ShaderNodeMixRGB', hide=False, inputs={'A':2,'B':1}),
+    'MaterialExpressionStaticSwitchParameter' : UE2BlenderNodeMapping('ShaderNodeMixRGB', label="Switch", hide=False, inputs={'A':2,'B':1}),
     'MaterialExpressionAppendVector' : UE2BlenderNodeMapping('ShaderNodeCombineXYZ', label="Append", inputs={'A':0,'B':1}),
     'MaterialExpressionLinearInterpolate' : UE2BlenderNodeMapping('ShaderNodeMixRGB', label="Lerp", inputs={'A':1,'B':2,'Alpha':0}),
     'MaterialExpressionClamp' : UE2BlenderNodeMapping('ShaderNodeClamp', inputs={'Input':0,'Min':1,'Max':2}),
@@ -159,10 +161,10 @@ def LinkSockets(mat, nodes_data, node_data):
                         print(f"LINK EXCEPTION: {node_data.node.name}.{ue_socket_name}")
                         print(e)
                         pass
-def ImportT3D(filename, mat=None):
+def ImportT3D(filename, mat=None, mat_object=None):
     graph_data = None
     t0 = time.time()
-    print(f"Import \"{filename}\"")
+    if logging: print(f"Import \"{filename}\"")
     t3d_text = pathlib.Path(filename).read_text()
 
     header = t3d_block.match(t3d_text)
@@ -186,6 +188,7 @@ def ImportT3D(filename, mat=None):
             if not mat:
                 mat = bpy.data.materials.new(mat_name)
                 mat.use_nodes = True
+            #mat.unreal = True
             node_tree = mat.node_tree
 
             graph_data = GraphData()
@@ -242,9 +245,16 @@ def ImportT3D(filename, mat=None):
                                     node.inputs['A'].default_value = float(m.group(4))
                                 case 'MaterialExpressionStaticSwitchParameter':
                                     node.inputs['Fac'].default_value = 1 if value_text == "True" else 0
+                        if classname == 'MaterialExpressionConstant3Vector':
+                            if 'Constant' in params:
+                                value_text = params['Constant']
+                                # TODO: unify with MaterialExpressionVectorParameter
+                                m = parse_rgba.match(value_text)
+                                node.inputs['RGB'].default_value = (float(m.group(1)), float(m.group(2)), float(m.group(3)), 1)
+                                node.inputs['A'].default_value = float(m.group(4))
                         if 'CoordinateIndex' in params:
-                            obj = bpy.context.object # TODO: less fragile?
-                            node.uv_map = obj.data.uv_layers.keys()[int(params['CoordinateIndex'])]
+                            if mat_object == None: mat_object = bpy.context.object # TODO: less fragile?
+                            node.uv_map = mat_object.data.uv_layers.keys()[int(params['CoordinateIndex'])]
                         if 'Texture' in params:
                             base_path = GetBasepath(params['Texture'])
                             texture_path = TryGetFilepath(base_path)
@@ -293,12 +303,14 @@ def ImportT3D(filename, mat=None):
                     #print(params)
 
                     parent_mat_name = params['Parent'].split('.')[-1].rstrip('\"\'')
-                    print(f"{parent_mat_name} Instance")
+                    if logging: print(f"{parent_mat_name} Instance")
                     
                     base_path = GetBasepath(params['Parent'])
                     mat_path = TryGetFilepath(base_path)
                     if mat_path:
-                        graph_data = ImportT3D(mat_path, mat)
+                        ret = ImportT3D(mat_path, mat, mat_object)
+                        mat = ret[0]
+                        graph_data = ret[1]
                         
                         for key in params:
                             spl = key.split('(')
@@ -326,25 +338,31 @@ def ImportT3D(filename, mat=None):
                                             else: print(f"Missing Texture \"{base_path}\"")
                     else: print(f"Missing Material \"{base_path}\"")
 
-    print(f"Imported {mat_name}: {(time.time() - t0) * 1000:.2f}ms")
-    return graph_data
-def ImportObjectMaterials(object):
+    if logging: print(f"Imported {mat_name}: {(time.time() - t0) * 1000:.2f}ms")
+    return (mat, graph_data)
+def ImportObjectMaterials(object, force=False):
     mesh = object.data
     for i, mat in enumerate(mesh.materials):
         spl = mat.name.split('.')
         mat_name = spl[0]
         if len(spl) > 1 and mat_name in bpy.data.materials:
-            mesh.materials[i] = bpy.data.materials[mat_name]
-        else:
-            mat_files = glob.glob(f"{export_dir}\\**\\{mat_name}.T3D", recursive=True)
-            if len(mat_files) > 0: ImportT3D(mat_files[0], mat)
-            else: print(f"Failed to find {mat_name}!")
-def ImportObjectsMaterials(objects):
-    print(f"Import Materials of {len(objects)} Objects")
+            mat_candidate = bpy.data.materials[mat_name]
+            #if mat_candidate.unreal:
+            if True:
+                bpy.data.materials.remove(mat)
+                mesh.materials[i] = mat = mat_candidate
+                if not force:
+                    print(f"Found Existing Material: {mat_name}")
+                    continue
+        mat_files = glob.glob(f"{export_dir}\\**\\{mat_name}.T3D", recursive=True)
+        if len(mat_files) > 0: mesh.materials[i] = ImportT3D(mat_files[0], mat, object)[0]
+        else: print(f"Failed to find {mat_name}!")
+def ImportObjectsMaterials(objects, force=False):
+    if logging: print(f"Import Materials of {len(objects)} Objects")
     t0_objects = time.time()
-    for object in objects: ImportObjectMaterials(object)
-    print(f"Import: {(time.time() - t0_objects)*1000:.2f}ms\n")
-def ImportSelectedObjectMaterials(): ImportObjectsMaterials(bpy.context.selected_objects)
+    for object in objects: ImportObjectMaterials(object, force)
+    if logging: print(f"Import: {(time.time() - t0_objects)*1000:.2f}ms\n")
+def ImportSelectedObjectMaterials(force=True): ImportObjectsMaterials(bpy.context.selected_objects, force)
 
 #ImportT3D(filename)
 #ImportSelectedObjectMaterials()
@@ -362,15 +380,49 @@ class ImportT3D_Operator(Operator, ImportHelper):
         ImportT3D(self.filepath)
         return {'FINISHED'}
 class ImportT3D_Materials(Operator):
-    """Import Unreal Engine Materials"""
+    """Import Unreal Engine .T3D Materials"""
     bl_idname = "unreal_import.materials"
     bl_label = "Import Unreal Engine Materials"
 
     def execute(self, context): 
         ImportSelectedObjectMaterials()
         return {'FINISHED'}
+def menu_import_fbx_t3d(self, context): self.layout.operator(ImportFBX_T3D_Operator.bl_idname, text="Unreal Engine FBX & Materials (.fbx)")
+class ImportFBX_T3D_Operator(Operator, ImportHelper):
+    """Import Unreal Engine .FBX & .T3D Materials"""
+    bl_idname = "unreal_import.fbx_t3d"
+    bl_label = "Import"
+    filename_ext = ".FBX"
+    filter_glob: StringProperty(default="*.FBX", options={'HIDDEN'}, maxlen=255)
+    files: CollectionProperty(type=bpy.types.OperatorFileListElement, options={'HIDDEN','SKIP_SAVE'})
+    directory: StringProperty(options={'HIDDEN'})
 
-register_classes = ( ImportT3D_Operator, ImportT3D_Materials )
+    collider_mode: EnumProperty(
+        name="Colliders", default='NONE',
+        items=(
+            ('NONE', "None", "Exclude Colliders"),
+            ('HIDE', "Hide", "Hide Colliders"),
+            ('SHOW', "Show", "Show Colliders")
+        )
+    )
+
+    def execute(self, context):
+        for file in self.files:
+            bpy.ops.import_scene.fbx(filepath=(self.directory + file.name))
+            for object in context.selected_objects:
+                if object.name.startswith("UCX_"): # Collision
+                    if self.collider_mode == 'NONE':
+                        bpy.data.objects.remove(object)
+                        continue
+                    object.display_type = 'WIRE'
+                    object.hide_render = True
+                    object.visible_camera = object.visible_diffuse = object.visible_glossy = object.visible_transmission = object.visible_volume_scatter = object.visible_shadow = False
+                    object.select_set(False)
+                    object.hide_set(self.collider_mode == 'HIDE')
+            ImportSelectedObjectMaterials()
+        return {'FINISHED'}
+
+register_classes = ( ImportT3D_Operator, ImportT3D_Materials, ImportFBX_T3D_Operator )
 
 persist_vars = bpy.app.driver_namespace
 def registerDrawEvent(event, item):
@@ -385,9 +437,13 @@ def removeDrawEvents(event):
         except: pass
 
 def register():
+    #bpy.types.Material.unreal = bpy.props.BoolProperty(name="Unreal Engine Material", description="Was this material imported from a .T3D file?", default=False)
     for cls in register_classes: bpy.utils.register_class(cls)
     registerDrawEvent(bpy.types.TOPBAR_MT_file_import, menu_import_t3d)
+    registerDrawEvent(bpy.types.TOPBAR_MT_file_import, menu_import_fbx_t3d)
 def unregister():
+    #try: del bpy.types.Material.unreal
+    #except: pass
     removeDrawEvents(bpy.types.TOPBAR_MT_file_import)
     for cls in register_classes:
         try: bpy.utils.unregister_class(cls)
@@ -397,4 +453,3 @@ if __name__ == "__main__":
     try: unregister()
     except: pass
     register()
-    #bpy.ops.unreal_import.t3d('INVOKE_DEFAULT')
