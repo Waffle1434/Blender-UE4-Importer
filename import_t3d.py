@@ -1,16 +1,19 @@
 import bpy, re, os, glob, time, pathlib
 from mathutils import *
+from bpy_extras.io_utils import ImportHelper
+from bpy.props import StringProperty, BoolProperty, EnumProperty
+from bpy.types import Operator
 
-filename = "M_Base_Trim.T3D"
-#filename = "MI_Trim_A_Red2.T3D"
+#filename = "M_Base_Trim.T3D"
+filename = "MI_Trim_A_Red2.T3D"
 export_dir = "F:\Art\Assets"
 filename = bpy.path.abspath("//" + filename)
 export_dir = os.path.normpath(export_dir)
 
 
 t3d_block = re.compile(r"( *)Begin\s+(\w+)\s+(?:Class=(.+?)\s+)?Name=\"(.+?)\"(.*?)\r?\n\1End\s+\2", re.DOTALL | re.IGNORECASE)
-block_parameters = re.compile(r"(\w+(?:\(\d+\))?)\s*=\s*(.+?)\r?\n", re.MULTILINE)
-inline_parameter = re.compile(r"([\w\d]+)=([^,\r\n]+)")
+block_parameters = re.compile(r"(\w+(?:\(\d+\))?)=(.+?)\r?\n", re.MULTILINE)
+inline_parameter = re.compile(r"([\w\d]+)=((?:\(.+?\))|(?:[^,\n]+))")
 parse_rgba = re.compile(r"\s*\(\s*R\s*=\s*(.+?)\s*,\s*G\s*=\s*(.+?)\s*,\s*B\s*=\s*(.+?)\s*,\s*A\s*=\s*(.+?)\s*\)", re.DOTALL | re.IGNORECASE)
 parse_socket_expression = re.compile(r"(.+?)'\"(?:(.+?):)?(.+?)\"'", re.S)
 
@@ -24,12 +27,13 @@ class UE2BlenderNodeMapping():
         self.outputs = outputs
         self.color = color
 class NodeData():
-    def __init__(self, classname, node=None, params=None, link_indirect=None):
+    def __init__(self, classname, node=None, params=None, link_indirect=None, input_remap=None):
         self.classname = classname
         self.node = node
         self.params = params
         self.link_indirect = link_indirect
-class GraphData():
+        self.input_remap = input_remap
+class GraphData(): # TODO: redundant, only returned node_guids used
     def __init__(self):
         self.nodes_data = {}
         self.node_guids = {}
@@ -37,23 +41,27 @@ class GraphData():
 
 default_mapping = UE2BlenderNodeMapping('ShaderNodeMath', label="UNKNOWN", color=Color((1,0,0)))
 UE2BlenderNode_dict = {
-    'Material' : UE2BlenderNodeMapping('ShaderNodeBsdfPrincipled', hide=False, inputs={'BaseColor':'Base Color','Metallic':'Metallic','Specular':'Specular','Roughness':'Roughness','Normal':'Normal'}),
+    'Material' : UE2BlenderNodeMapping('ShaderNodeBsdfPrincipled', hide=False, inputs={ 'BaseColor':'Base Color','Metallic':'Metallic','Specular':'Specular','Roughness':'Roughness',
+        'EmissiveColor':'Emission','Opacity':'Alpha','Normal':'Normal','Refraction':'IOR' }),
     'MaterialExpressionAdd' : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='ADD', inputs={'A':0,'B':1}),
     'MaterialExpressionMultiply' : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='MULTIPLY', inputs={'A':0,'B':1}),
+    'MaterialExpressionConstant' : UE2BlenderNodeMapping('ShaderNodeValue', hide=False),
     'MaterialExpressionScalarParameter' : UE2BlenderNodeMapping('ShaderNodeValue', hide=False),
     'MaterialExpressionVectorParameter' : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='RGBA', hide=False, outputs={'RGB':0,'R':1,'G':2,'B':3,'A':4}),
-    'MaterialExpressionStaticSwitchParameter' : UE2BlenderNodeMapping('ShaderNodeMixRGB', hide=False, inputs={'A':1,'B':2}),
+    'MaterialExpressionStaticSwitchParameter' : UE2BlenderNodeMapping('ShaderNodeMixRGB', hide=False, inputs={'A':2,'B':1}),
     'MaterialExpressionAppendVector' : UE2BlenderNodeMapping('ShaderNodeCombineXYZ', label="Append", inputs={'A':0,'B':1}),
     'MaterialExpressionLinearInterpolate' : UE2BlenderNodeMapping('ShaderNodeMixRGB', label="Lerp", inputs={'A':1,'B':2,'Alpha':0}),
     'MaterialExpressionClamp' : UE2BlenderNodeMapping('ShaderNodeClamp', inputs={'Input':0,'Min':1,'Max':2}),
+    'MaterialExpressionPower' : UE2BlenderNodeMapping('ShaderNodeMath', subtype='POWER', inputs={'Base':0,'Exponent':1}),
     'MaterialExpressionTextureSampleParameter2D' : UE2BlenderNodeMapping('ShaderNodeTexImage', hide=False, inputs={'Coordinates':0}),
     'MaterialExpressionTextureCoordinate' : UE2BlenderNodeMapping('ShaderNodeUVMap', hide=False),
     'MaterialExpressionDesaturation' : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='Desaturation', inputs={'Input':0,'Fraction':1}),
     'MaterialExpressionComment' : UE2BlenderNodeMapping('NodeFrame'),
+    'MaterialExpressionFresnel' : UE2BlenderNodeMapping('ShaderNodeFresnel', hide=False),
     'CheapContrast_RGB' : UE2BlenderNodeMapping('ShaderNodeBrightContrast', hide=False, inputs={'FunctionInputs(0)':'Color','FunctionInputs(1)':'Contrast'}),
-    'BlendAngleCorrectedNormals' : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='BlendAngleCorrectedNormals', hide=False, inputs={'FunctionInputs(0)':0,'FunctionInputs(1)':1}),
+    'BlendAngleCorrectedNormals' : UE2BlenderNodeMapping('ShaderNodeMixRGB', label="Blend Normals", inputs={'FunctionInputs(0)':1,'FunctionInputs(1)':2}),
 }
-class_blacklist = { 'SceneThumbnailInfoWithPrimitive' }
+class_blacklist = { 'SceneThumbnailInfoWithPrimitive', 'MaterialExpressionPanner' }
 material_classes = { 'Material', 'MaterialInstanceConstant' }
 param_x = 'MaterialExpressionEditorX'
 param_y = 'MaterialExpressionEditorY'
@@ -86,9 +94,8 @@ def GetBasepath(expression_text):
 def TryGetFilepath(base_path):
     potential_paths = glob.glob(base_path + ".*")
     return potential_paths[0] if len(potential_paths) > 0 else None
-def SetPos(node, param_x, param_y, params):
-    if param_x in params and param_y in params: node.location = (int(params[param_x]), -int(params[param_y]))
-def LinkSocket(mat, nodes_data, node, paramName, expression_text, socket_mapping):
+def SetPos(node, param_x, param_y, params): node.location = (int(params.get(param_x,"0")), -int(params.get(param_y,"0")))
+def LinkSocket(mat, nodes_data, node_data, param_name, expression_text, socket_mapping):
     socket_params = ParseParams(expression_text.strip("()"), inline_parameter)
     #print(socket_params)
 
@@ -99,10 +106,13 @@ def LinkSocket(mat, nodes_data, node, paramName, expression_text, socket_mapping
         link_node_type = m.group(1)
         link_mat = m.group(2)
         link_node_name = m.group(3)
-        if not link_mat or link_mat == mat.name:
+        #if not link_mat or link_mat == mat.name:
+        if True:
             if link_node_name in nodes_data:
-                #print(link_node_name + "->" + node.name)
                 link_node_data = nodes_data[link_node_name]
+                if link_node_data.classname in class_blacklist: return
+                
+                node = node_data.node
                 link_node = link_node_data.node
                 src_socket = None
                 dst_socket = None
@@ -114,8 +124,8 @@ def LinkSocket(mat, nodes_data, node, paramName, expression_text, socket_mapping
                 else: outputs = link_node.outputs
                 src_socket = outputs[src_index]
 
-                if paramName in socket_mapping: 
-                    dst_index = socket_mapping[paramName]
+                if param_name in socket_mapping: 
+                    dst_index = socket_mapping[param_name]
                     if link_node_type == 'MaterialExpressionAppendVector' and node.bl_idname == 'ShaderNodeCombineXYZ':
                         raise Exception("Unreal's append is annoying")
                         # TODO: move to LinkSockets and handle all Append sockets at once
@@ -128,10 +138,12 @@ def LinkSocket(mat, nodes_data, node, paramName, expression_text, socket_mapping
                         mat.node_tree.links.new(sep.outputs[2], node.inputs[2])
                     
                     dst_socket = node.inputs[dst_index]
-                else: print(f"UNKNOWN PARAM: {node.name}.{paramName}")
+                else: print(f"UNKNOWN PARAM: {node.name}.{param_name}")
+
+                if node_data.input_remap and param_name in node_data.input_remap: dst_socket = node_data.input_remap[param_name]
 
                 if src_socket and dst_socket: mat.node_tree.links.new(src_socket, dst_socket)
-                else: print(f"FAILED LINK: {node.name}.{paramName}")
+                else: print(f"FAILED LINK: {node.name}.{param_name}")
             else: print(f"MISSING NODE: {str(link_node_name)}")
         else: print(f"UNKNOWN MAT: {str(link_mat)}")
     else: print(f"FAILED LINK, PARSE FAIL: {expression_text}")
@@ -142,7 +154,7 @@ def LinkSockets(mat, nodes_data, node_data):
             for ue_socket_name in mapping.inputs:
                 if ue_socket_name in node_data.params:
                     try:
-                        LinkSocket(mat, nodes_data, node_data.node, ue_socket_name, node_data.params[ue_socket_name], mapping.inputs)
+                        LinkSocket(mat, nodes_data, node_data, ue_socket_name, node_data.params[ue_socket_name], mapping.inputs)
                     except Exception as e:
                         print(f"LINK EXCEPTION: {node_data.node.name}.{ue_socket_name}")
                         print(e)
@@ -162,9 +174,15 @@ def ImportT3D(filename, mat=None):
             mat_name = header.group(4)
             object_body = header.group(5)
 
-            print(f"post-body-parse {(time.time() - t0)*1000:.2f}ms")
+            #print(f"post-body-parse {(time.time() - t0)*1000:.2f}ms")
 
-            if mat_name in bpy.data.materials: bpy.data.materials.remove(bpy.data.materials[mat_name])
+            if mat_name in bpy.data.materials:
+                #bpy.data.materials.remove(bpy.data.materials[mat_name])
+                mat = bpy.data.materials[mat_name]
+                node_whitelist = { 'ShaderNodeBsdfPrincipled', 'ShaderNodeOutputMaterial' }
+                nodes = mat.node_tree.nodes
+                for node in nodes:
+                    if node.bl_idname not in node_whitelist: nodes.remove(node) 
             if not mat:
                 mat = bpy.data.materials.new(mat_name)
                 mat.use_nodes = True
@@ -214,16 +232,16 @@ def ImportT3D(filename, mat=None):
                         if 'Text' in params: node.label = params['Text'].strip('\"')
                         elif 'ParameterName' in params: node.label = params['ParameterName'].strip('\"')
                         if 'DefaultValue' in params: # TODO: move to mapping class?
-                            valueStr = params['DefaultValue']
+                            value_text = params['DefaultValue']
                             match classname:
                                 case 'MaterialExpressionScalarParameter':
-                                    node.outputs[0].default_value = float(valueStr)
+                                    node.outputs[0].default_value = float(value_text)
                                 case 'MaterialExpressionVectorParameter':
-                                    m = parse_rgba.match(valueStr)
+                                    m = parse_rgba.match(value_text)
                                     node.inputs['RGB'].default_value = (float(m.group(1)), float(m.group(2)), float(m.group(3)), 1)
                                     node.inputs['A'].default_value = float(m.group(4))
                                 case 'MaterialExpressionStaticSwitchParameter':
-                                    node.inputs['Fac'].default_value = 1 if valueStr == "True" else 0
+                                    node.inputs['Fac'].default_value = 1 if value_text == "True" else 0
                         if 'CoordinateIndex' in params:
                             obj = bpy.context.object # TODO: less fragile?
                             node.uv_map = obj.data.uv_layers.keys()[int(params['CoordinateIndex'])]
@@ -231,66 +249,152 @@ def ImportT3D(filename, mat=None):
                             base_path = GetBasepath(params['Texture'])
                             texture_path = TryGetFilepath(base_path)
                             if texture_path:
-                                print(texture_path)
-                                node.image = bpy.data.images.load(texture_path)
+                                #print(texture_path)
+                                node.image = bpy.data.images.load(texture_path, check_existing=True)
+                                if params.get('SamplerType') == 'SAMPLERTYPE_Normal':
+                                    node.image.colorspace_settings.name = 'Non-Color'
+                                    node.interpolation = 'Smart'
                             else: print(f"Missing Texture \"{base_path}\"")
                         if 'ExpressionGUID' in params: graph_data.node_guids[params['ExpressionGUID']] = node_data
 
                         if node_data.link_indirect: node_data.link_indirect.data.location = node.location + Vector((100,30))
                     else: print("NODE NOT FOUND: " + name)
             
-            print(f"t1 {(time.time() - t0)*1000:.2f}ms")
+            #print(f"t1 {(time.time() - t0)*1000:.2f}ms")
 
             match object_classname:
                 case 'Material':
                     t0_link = time.time()
                     for name in nodes_data: LinkSockets(mat, nodes_data, nodes_data[name])
-                    print(f"links {(time.time() - t0_link)*1000:.2f}ms")
+                    #print(f"links {(time.time() - t0_link)*1000:.2f}ms")
 
                     mat_remaining_text = object_body[m_object.end(0):]
                     node = node_tree.nodes['Principled BSDF']
                     node_data = NodeData(object_classname, node, ParseParams(mat_remaining_text))
-                    SetPos(node, 'EditorX', 'EditorY', node_data.params)
+                    params = node_data.params
+                    SetPos(node, 'EditorX', 'EditorY', params)
                     node_tree.nodes['Material Output'].location = node.location + Vector((300,0))
+                    is_transparent = params.get('BlendMode') == 'BLEND_Translucent'
+                    mat.blend_method = 'BLEND' if is_transparent else 'OPAQUE'
+                    mat.shadow_method = 'NONE' if is_transparent else 'OPAQUE'
+                    mat.use_backface_culling = not params.get('TwoSided',False)
+
+                    if 'Normal' in params:
+                        normal_map = node_tree.nodes.new('ShaderNodeNormalMap')
+                        normal_map.location = node.location + Vector((-200, -600))
+                        node_tree.links.new(normal_map.outputs['Normal'], node.inputs['Normal'])
+                        node_data.input_remap = { 'Normal':normal_map.inputs['Color'] }
+
                     LinkSockets(mat, nodes_data, node_data)
                     # TODO: store output node in nodes_data?
                 case 'MaterialInstanceConstant':
-                    print("Material Instance")
                     mat_remaining_text = object_body[m_object.end(0):]
                     params = ParseParams(mat_remaining_text)
                     #print(params)
+
+                    parent_mat_name = params['Parent'].split('.')[-1].rstrip('\"\'')
+                    print(f"{parent_mat_name} Instance")
                     
                     base_path = GetBasepath(params['Parent'])
                     mat_path = TryGetFilepath(base_path)
                     if mat_path:
                         graph_data = ImportT3D(mat_path, mat)
-                        raise Exception("Need to get returned cached data?")
+                        
+                        for key in params:
+                            spl = key.split('(')
+                            if len(spl) > 1:
+                                socket_params = ParseParams(params[key].strip("()"), inline_parameter)
+                                if 'ParameterValue' in socket_params: 
+                                    value_text = socket_params['ParameterValue']
+                                    node_data = graph_data.node_guids[socket_params['ExpressionGUID']]
+                                    node = node_data.node
+                                    match spl[0]: # TODO: method parse param to node value? - ehh, classnames are different, otherwise same
+                                        case 'ScalarParameterValues':
+                                            node.outputs[0].default_value = float(value_text)
+                                        case 'VectorParameterValues':
+                                            m = parse_rgba.match(value_text)
+                                            node.inputs['RGB'].default_value = (float(m.group(1)), float(m.group(2)), float(m.group(3)), 1)
+                                            node.inputs['A'].default_value = float(m.group(4))
+                                        case 'TextureParameterValues':
+                                            base_path = GetBasepath(value_text)
+                                            texture_path = TryGetFilepath(base_path)
+                                            if texture_path:
+                                                colorspace = node.image.colorspace_settings.name if node.image else None
+                                                #print(texture_path)
+                                                node.image = bpy.data.images.load(texture_path, check_existing=True)
+                                                if colorspace: node.image.colorspace_settings.name = colorspace
+                                            else: print(f"Missing Texture \"{base_path}\"")
                     else: print(f"Missing Material \"{base_path}\"")
-
-                    for key in params:
-                        spl = key.split('(')
-                        if len(spl) > 1:
-                            socket_params = ParseParams(params[key].strip("()"), inline_parameter)
-                            if 'ParameterValue' in socket_params: 
-                                value_text = socket_params['ParameterValue']
-                                guid = socket_params['ExpressionGUID']
-                                match spl[0]: # TODO: method parse param to node value? - ehh, classnames are different
-                                    case 'ScalarParameterValues':
-                                        print(key)
-                                        value = float(value_text)
-                                    case 'VectorParameterValues':
-                                        print(key)
-                                    case 'TextureParameterValues':
-                                        print(key)
-                                        base_path = GetBasepath(value_text)
-                                        texture_path = TryGetFilepath(base_path)
-                                        if texture_path:
-                                            print(texture_path)
-                                            raise Exception("TODO: get node")
-                                            node.image = bpy.data.images.load(texture_path)
-                                        else: print(f"Missing Texture \"{base_path}\"")
 
     print(f"Imported {mat_name}: {(time.time() - t0) * 1000:.2f}ms")
     return graph_data
+def ImportObjectMaterials(object):
+    mesh = object.data
+    for i, mat in enumerate(mesh.materials):
+        spl = mat.name.split('.')
+        mat_name = spl[0]
+        if len(spl) > 1 and mat_name in bpy.data.materials:
+            mesh.materials[i] = bpy.data.materials[mat_name]
+        else:
+            mat_files = glob.glob(f"{export_dir}\\**\\{mat_name}.T3D", recursive=True)
+            if len(mat_files) > 0: ImportT3D(mat_files[0], mat)
+            else: print(f"Failed to find {mat_name}!")
+def ImportObjectsMaterials(objects):
+    print(f"Import Materials of {len(objects)} Objects")
+    t0_objects = time.time()
+    for object in objects: ImportObjectMaterials(object)
+    print(f"Import: {(time.time() - t0_objects)*1000:.2f}ms\n")
+def ImportSelectedObjectMaterials(): ImportObjectsMaterials(bpy.context.selected_objects)
 
-ImportT3D(filename)
+#ImportT3D(filename)
+#ImportSelectedObjectMaterials()
+
+
+def menu_import_t3d(self, context): self.layout.operator(ImportT3D_Operator.bl_idname, text="Unreal Engine Material (.T3D)")
+class ImportT3D_Operator(Operator, ImportHelper):
+    """Import Unreal Engine .T3D Material File"""
+    bl_idname = "unreal_import.t3d"
+    bl_label = "Import"
+    filename_ext = ".T3D"
+    filter_glob: StringProperty(default="*.T3D", options={'HIDDEN'}, maxlen=255)
+
+    def execute(self, context): 
+        ImportT3D(self.filepath)
+        return {'FINISHED'}
+class ImportT3D_Materials(Operator):
+    """Import Unreal Engine Materials"""
+    bl_idname = "unreal_import.materials"
+    bl_label = "Import Unreal Engine Materials"
+
+    def execute(self, context): 
+        ImportSelectedObjectMaterials()
+        return {'FINISHED'}
+
+register_classes = ( ImportT3D_Operator, ImportT3D_Materials )
+
+persist_vars = bpy.app.driver_namespace
+def registerDrawEvent(event, item):
+    id = event.bl_rna.name
+    handles = persist_vars.get(id, [])
+    event.append(item)
+    handles.append(item)
+    persist_vars[id] = handles
+def removeDrawEvents(event):
+    for item in persist_vars.get(event.bl_rna.name,[]):
+        try: event.remove(item)
+        except: pass
+
+def register():
+    for cls in register_classes: bpy.utils.register_class(cls)
+    registerDrawEvent(bpy.types.TOPBAR_MT_file_import, menu_import_t3d)
+def unregister():
+    removeDrawEvents(bpy.types.TOPBAR_MT_file_import)
+    for cls in register_classes:
+        try: bpy.utils.unregister_class(cls)
+        except: pass
+
+if __name__ == "__main__":
+    try: unregister()
+    except: pass
+    register()
+    #bpy.ops.unreal_import.t3d('INVOKE_DEFAULT')
