@@ -61,15 +61,16 @@ UE2BlenderNode_dict = {
     'MaterialExpressionComment' : UE2BlenderNodeMapping('NodeFrame'),
     'MaterialExpressionFresnel' : UE2BlenderNodeMapping('ShaderNodeFresnel', hide=False),
     'CheapContrast_RGB' : UE2BlenderNodeMapping('ShaderNodeBrightContrast', hide=False, inputs={'FunctionInputs(0)':'Color','FunctionInputs(1)':'Contrast'}),
-    'BlendAngleCorrectedNormals' : UE2BlenderNodeMapping('ShaderNodeMixRGB', label="Blend Normals", inputs={'FunctionInputs(0)':1,'FunctionInputs(1)':2}),
+    'BlendAngleCorrectedNormals' : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='BlendAngleCorrectedNormals', hide=False, inputs={'FunctionInputs(0)':0,'FunctionInputs(1)':1}),
 }
 class_blacklist = { 'SceneThumbnailInfoWithPrimitive', 'MaterialExpressionPanner' }
 material_classes = { 'Material', 'MaterialInstanceConstant' }
+node_whitelist = { 'ShaderNodeBsdfPrincipled', 'ShaderNodeOutputMaterial' }
 param_x = 'MaterialExpressionEditorX'
 param_y = 'MaterialExpressionEditorY'
 #safety_override = False
 
-def SetupNode(node_tree, name, mapping, node_data):
+def SetupNode(node_tree, name, mapping, node_data): # TODO: inline
     node = node_tree.nodes.new(mapping.bl_idname)
     node.name = name
     node.hide = mapping.hide
@@ -81,10 +82,20 @@ def SetupNode(node_tree, name, mapping, node_data):
     if mapping.color: node.color = mapping.color
 
     if mapping.bl_idname == 'ShaderNodeTexImage':
+        rgb_in = node.outputs['Color']
+        if node_data.params.get('SamplerType') == 'SAMPLERTYPE_Normal':
+            rgb2n = node_tree.nodes.new('ShaderNodeGroup')
+            rgb2n.node_tree = bpy.data.node_groups['RGBtoNormal']
+            rgb2n.hide = True
+            SetPos(rgb2n, param_x, param_y, node_data.params)
+            rgb2n.location += Vector((-50,30))
+            node_tree.links.new(node.outputs['Color'], rgb2n.inputs['RGB'])
+            rgb_in = rgb2n.outputs['Normal']
+
         rgba = node_tree.nodes.new('ShaderNodeGroup')
         rgba.node_tree = bpy.data.node_groups['RGBA']
         rgba.hide = True
-        node_tree.links.new(node.outputs['Color'], rgba.inputs['RGB'])
+        node_tree.links.new(rgb_in, rgba.inputs['RGB'])
         node_tree.links.new(node.outputs['Alpha'], rgba.inputs['A'])
         node_data.link_indirect = rgba.outputs
     return node
@@ -106,48 +117,45 @@ def LinkSocket(mat, nodes_data, node_data, param_name, expression_text, socket_m
     m = parse_socket_expression.match(socket_params[key])
     if m:
         link_node_type = m.group(1)
-        link_mat = m.group(2)
+        #link_mat = m.group(2)
         link_node_name = m.group(3)
-        #if not link_mat or link_mat == mat.name:
-        if True:
-            if link_node_name in nodes_data:
-                link_node_data = nodes_data[link_node_name]
-                if link_node_data.classname in class_blacklist: return
+        if link_node_name in nodes_data:
+            link_node_data = nodes_data[link_node_name]
+            if link_node_data.classname in class_blacklist: return
+            
+            node = node_data.node
+            link_node = link_node_data.node
+            src_socket = None
+            dst_socket = None
+            src_index = 0
+
+            if 'OutputIndex' in socket_params: src_index = int(socket_params['OutputIndex'])
+
+            if link_node_data.link_indirect: outputs = link_node_data.link_indirect
+            else: outputs = link_node.outputs
+            src_socket = outputs[src_index]
+
+            if param_name in socket_mapping: 
+                dst_index = socket_mapping[param_name]
+                if link_node_type == 'MaterialExpressionAppendVector' and node.bl_idname == 'ShaderNodeCombineXYZ':
+                    raise Exception("Unreal's append is annoying")
+                    # TODO: move to LinkSockets and handle all Append sockets at once
+                    dst_index = 2
+                    sep = mat.node_tree.nodes.new('ShaderNodeSeparateXYZ')
+                    sep.location = link_node.location + Vector((100,0))
+                    mat.node_tree.links.new(link_node.outputs[0], sep.inputs[0])
+                    mat.node_tree.links.new(sep.outputs[0], node.inputs[0])
+                    mat.node_tree.links.new(sep.outputs[1], node.inputs[1])
+                    mat.node_tree.links.new(sep.outputs[2], node.inputs[2])
                 
-                node = node_data.node
-                link_node = link_node_data.node
-                src_socket = None
-                dst_socket = None
-                src_index = 0
+                dst_socket = node.inputs[dst_index]
+            else: print(f"UNKNOWN PARAM: {node.name}.{param_name}")
 
-                if 'OutputIndex' in socket_params: src_index = int(socket_params['OutputIndex'])
+            if node_data.input_remap and param_name in node_data.input_remap: dst_socket = node_data.input_remap[param_name]
 
-                if link_node_data.link_indirect: outputs = link_node_data.link_indirect
-                else: outputs = link_node.outputs
-                src_socket = outputs[src_index]
-
-                if param_name in socket_mapping: 
-                    dst_index = socket_mapping[param_name]
-                    if link_node_type == 'MaterialExpressionAppendVector' and node.bl_idname == 'ShaderNodeCombineXYZ':
-                        raise Exception("Unreal's append is annoying")
-                        # TODO: move to LinkSockets and handle all Append sockets at once
-                        dst_index = 2
-                        sep = mat.node_tree.nodes.new('ShaderNodeSeparateXYZ')
-                        sep.location = link_node.location + Vector((100,0))
-                        mat.node_tree.links.new(link_node.outputs[0], sep.inputs[0])
-                        mat.node_tree.links.new(sep.outputs[0], node.inputs[0])
-                        mat.node_tree.links.new(sep.outputs[1], node.inputs[1])
-                        mat.node_tree.links.new(sep.outputs[2], node.inputs[2])
-                    
-                    dst_socket = node.inputs[dst_index]
-                else: print(f"UNKNOWN PARAM: {node.name}.{param_name}")
-
-                if node_data.input_remap and param_name in node_data.input_remap: dst_socket = node_data.input_remap[param_name]
-
-                if src_socket and dst_socket: mat.node_tree.links.new(src_socket, dst_socket)
-                else: print(f"FAILED LINK: {node.name}.{param_name}")
-            else: print(f"MISSING NODE: {str(link_node_name)}")
-        else: print(f"UNKNOWN MAT: {str(link_mat)}")
+            if src_socket and dst_socket: mat.node_tree.links.new(src_socket, dst_socket)
+            else: print(f"FAILED LINK: {node.name}.{param_name}")
+        else: print(f"MISSING NODE: {str(link_node_name)}")
     else: print(f"FAILED LINK, PARSE FAIL: {expression_text}")
 def LinkSockets(mat, nodes_data, node_data):
     if node_data.classname in UE2BlenderNode_dict:
@@ -181,7 +189,6 @@ def ImportT3D(filename, mat=None, mat_object=None):
             if mat_name in bpy.data.materials:
                 #bpy.data.materials.remove(bpy.data.materials[mat_name])
                 mat = bpy.data.materials[mat_name]
-                node_whitelist = { 'ShaderNodeBsdfPrincipled', 'ShaderNodeOutputMaterial' }
                 nodes = mat.node_tree.nodes
                 for node in nodes:
                     if node.bl_idname not in node_whitelist: nodes.remove(node) 
@@ -200,18 +207,7 @@ def ImportT3D(filename, mat=None, mat_object=None):
                 name = m_object.group(4)
 
                 if classname:
-                    classname = classname.split('.')[-1]
-                    nodes_data[name] = node_data = NodeData(classname)
-                    if classname in class_blacklist: continue
-
-                    isnt_fnc = classname != 'MaterialExpressionMaterialFunctionCall'
-                    
-                    if classname in UE2BlenderNode_dict: mapping = UE2BlenderNode_dict[classname]
-                    elif isnt_fnc:
-                        print(f"UNKNOWN CLASS: {classname}")
-                        mapping = default_mapping
-                    
-                    if isnt_fnc: node_data.node = SetupNode(node_tree, name, mapping, node_data) # TODO: always defer creation?
+                    nodes_data[name] = node_data = NodeData(classname.split('.')[-1])
                 else:
                     if name in nodes_data:# TODO: redundant, always true?
                         node_data = nodes_data[name]
@@ -223,11 +219,15 @@ def ImportT3D(filename, mat=None, mat_object=None):
                         node_data.params = params = ParseParams(body)
                         #print(params)
 
-                        if classname == 'MaterialExpressionMaterialFunctionCall':
-                            node_data.classname = classname = params['MaterialFunction'].split('.')[-1].strip('\"\'')
-                            node_data.node = node = SetupNode(node_tree, name, UE2BlenderNode_dict[classname], node_data)
-                        else: node = node_data.node
+                        if classname == 'MaterialExpressionMaterialFunctionCall': node_data.classname = classname = params['MaterialFunction'].split('.')[-1].strip('\"\'')
+
+                        if classname in UE2BlenderNode_dict: mapping = UE2BlenderNode_dict[classname]
+                        else:
+                            print(f"UNKNOWN CLASS: {classname}")
+                            mapping = default_mapping
                         
+                        node_data.node = node = SetupNode(node_tree, name, mapping, node_data)
+
                         SetPos(node, param_x, param_y, params)
                         if 'SizeX' in params and 'SizeY' in params:
                             node.width = int(params['SizeX'])
@@ -291,9 +291,17 @@ def ImportT3D(filename, mat=None, mat_object=None):
 
                     if 'Normal' in params:
                         normal_map = node_tree.nodes.new('ShaderNodeNormalMap')
-                        normal_map.location = node.location + Vector((-200, -600))
+                        normal_map.location = node.location + Vector((-200, -570))
+                        # TODO: set normal uv
                         node_tree.links.new(normal_map.outputs['Normal'], node.inputs['Normal'])
-                        node_data.input_remap = { 'Normal':normal_map.inputs['Color'] }
+
+                        n2rgb = node_tree.nodes.new('ShaderNodeGroup')
+                        n2rgb.node_tree = bpy.data.node_groups['NormalToRGB']
+                        n2rgb.location = normal_map.location + Vector((-160, -130))
+                        n2rgb.hide = True
+                        node_tree.links.new(n2rgb.outputs['RGB'], normal_map.inputs['Color'])
+
+                        node_data.input_remap = { 'Normal':n2rgb.inputs['Normal'] }
 
                     LinkSockets(mat, nodes_data, node_data)
                     # TODO: store output node in nodes_data?
@@ -343,17 +351,16 @@ def ImportT3D(filename, mat=None, mat_object=None):
 def ImportObjectMaterials(object, force=False):
     mesh = object.data
     for i, mat in enumerate(mesh.materials):
+        if not mat: continue
         spl = mat.name.split('.')
         mat_name = spl[0]
         if len(spl) > 1 and mat_name in bpy.data.materials:
             mat_candidate = bpy.data.materials[mat_name]
-            #if mat_candidate.unreal:
-            if True:
-                bpy.data.materials.remove(mat)
-                mesh.materials[i] = mat = mat_candidate
-                if not force:
-                    print(f"Found Existing Material: {mat_name}")
-                    continue
+            #bpy.data.materials.remove(mat)
+            mesh.materials[i] = mat = mat_candidate
+            if not force:
+                print(f"Found Existing Material: {mat_name}")
+                continue
         mat_files = glob.glob(f"{export_dir}\\**\\{mat_name}.T3D", recursive=True)
         if len(mat_files) > 0: mesh.materials[i] = ImportT3D(mat_files[0], mat, object)[0]
         else: print(f"Failed to find {mat_name}!")
@@ -362,7 +369,7 @@ def ImportObjectsMaterials(objects, force=False):
     t0_objects = time.time()
     for object in objects: ImportObjectMaterials(object, force)
     if logging: print(f"Import: {(time.time() - t0_objects)*1000:.2f}ms\n")
-def ImportSelectedObjectMaterials(force=True): ImportObjectsMaterials(bpy.context.selected_objects, force)
+def ImportSelectedObjectMaterials(force=True): ImportObjectsMaterials(filter(lambda o: o.type == 'MESH', bpy.context.selected_objects), force)
 
 #ImportT3D(filename)
 #ImportSelectedObjectMaterials()
