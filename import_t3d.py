@@ -6,9 +6,8 @@ from bpy.types import Operator
 
 #filename = "M_Base_Trim.T3D"
 filename = "MI_Trim_A_Red2.T3D"
-export_dir = "F:\Art\Assets"
+#base_dir = "F:\Art\Assets"
 filename = bpy.path.abspath("//" + filename)
-export_dir = os.path.normpath(export_dir)
 logging = False
 
 
@@ -43,7 +42,7 @@ class GraphData(): # TODO: redundant, only returned node_guids used
 default_mapping = UE2BlenderNodeMapping('ShaderNodeMath', label="UNKNOWN", color=Color((1,0,0)))
 UE2BlenderNode_dict = {
     'Material' : UE2BlenderNodeMapping('ShaderNodeBsdfPrincipled', hide=False, inputs={ 'BaseColor':'Base Color','Metallic':'Metallic','Specular':'Specular','Roughness':'Roughness',
-        'EmissiveColor':'Emission','Opacity':'Alpha','Normal':'Normal','Refraction':'IOR' }),
+        'EmissiveColor':'Emission','Opacity':'Alpha','OpacityMask':'Alpha','Normal':'Normal','Refraction':'IOR' }),
     'MaterialExpressionAdd' : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='ADD', inputs={'A':0,'B':1}),
     'MaterialExpressionMultiply' : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='MULTIPLY', inputs={'A':0,'B':1}),
     'MaterialExpressionConstant' : UE2BlenderNodeMapping('ShaderNodeValue', hide=False),
@@ -100,12 +99,13 @@ def SetupNode(node_tree, name, mapping, node_data): # TODO: inline
         node_data.link_indirect = rgba.outputs
     return node
 def ParseParams(text, regex=block_parameters): return { m.group(1): m.group(2) for m in regex.finditer(text) }
-def GetBasepath(expression_text):
+def GuessBaseDir(filename): return filename[:filename.find("Game")] # Unreal defaults to starting path with "Game" on asset export
+def GetFullPath(base_dir, expression_text):
     m = parse_socket_expression.match(expression_text)
     #type = m.group(1)
-    return os.path.join(export_dir, os.path.normpath(m.group(3).lstrip('/').split('.')[0]))
-def TryGetFilepath(base_path):
-    potential_paths = glob.glob(base_path + ".*")
+    return os.path.join(base_dir, os.path.normpath(m.group(3).lstrip('/').split('.')[0]))
+def TryGetFilepath(extensionless_path):
+    potential_paths = glob.glob(extensionless_path + ".*")
     return potential_paths[0] if len(potential_paths) > 0 else None
 def SetPos(node, param_x, param_y, params): node.location = (int(params.get(param_x,"0")), -int(params.get(param_y,"0")))
 def LinkSocket(mat, nodes_data, node_data, param_name, expression_text, socket_mapping):
@@ -169,10 +169,11 @@ def LinkSockets(mat, nodes_data, node_data):
                         print(f"LINK EXCEPTION: {node_data.node.name}.{ue_socket_name}")
                         print(e)
                         pass
-def ImportT3D(filename, mat=None, mat_object=None):
-    graph_data = None
+def ImportT3D(filename, mat=None, mat_object=None, base_dir=""):
     t0 = time.time()
+    graph_data = None
     if logging: print(f"Import \"{filename}\"")
+    if base_dir != "": base_dir = os.path.normpath(base_dir)
     t3d_text = pathlib.Path(filename).read_text()
 
     header = t3d_block.match(t3d_text)
@@ -186,7 +187,7 @@ def ImportT3D(filename, mat=None, mat_object=None):
 
             #print(f"post-body-parse {(time.time() - t0)*1000:.2f}ms")
 
-            if mat_name in bpy.data.materials:
+            if mat_name in bpy.data.materials:# TODO: redundant?
                 #bpy.data.materials.remove(bpy.data.materials[mat_name])
                 mat = bpy.data.materials[mat_name]
                 nodes = mat.node_tree.nodes
@@ -256,15 +257,15 @@ def ImportT3D(filename, mat=None, mat_object=None):
                             if mat_object == None: mat_object = bpy.context.object # TODO: less fragile?
                             node.uv_map = mat_object.data.uv_layers.keys()[int(params['CoordinateIndex'])]
                         if 'Texture' in params:
-                            base_path = GetBasepath(params['Texture'])
-                            texture_path = TryGetFilepath(base_path)
-                            if texture_path:
-                                #print(texture_path)
-                                node.image = bpy.data.images.load(texture_path, check_existing=True)
+                            base_path = GetFullPath(base_dir, params['Texture'])
+                            tex_path = TryGetFilepath(base_path)
+                            if tex_path:
+                                #print(tex_path)
+                                node.image = bpy.data.images.load(tex_path, check_existing=True)
                                 if params.get('SamplerType') == 'SAMPLERTYPE_Normal':
                                     node.image.colorspace_settings.name = 'Non-Color'
                                     node.interpolation = 'Smart'
-                            else: print(f"Missing Texture \"{base_path}\"")
+                            else: print(f"Missing Texture \"{tex_path}\"")
                         if 'ExpressionGUID' in params: graph_data.node_guids[params['ExpressionGUID']] = node_data
 
                         if node_data.link_indirect: node_data.link_indirect.data.location = node.location + Vector((100,30))
@@ -284,9 +285,16 @@ def ImportT3D(filename, mat=None, mat_object=None):
                     params = node_data.params
                     SetPos(node, 'EditorX', 'EditorY', params)
                     node_tree.nodes['Material Output'].location = node.location + Vector((300,0))
-                    is_transparent = params.get('BlendMode') == 'BLEND_Translucent'
-                    mat.blend_method = 'BLEND' if is_transparent else 'OPAQUE'
-                    mat.shadow_method = 'NONE' if is_transparent else 'OPAQUE'
+                    match params.get('BlendMode'):
+                        case 'BLEND_Translucent':
+                            mat.blend_method = 'BLEND'
+                            mat.shadow_method = 'HASHED'
+                        case 'BLEND_Masked':
+                            mat.blend_method = 'CLIP'
+                            mat.shadow_method = 'CLIP'
+                        case _:
+                            mat.blend_method = 'OPAQUE'
+                            mat.shadow_method = 'OPAQUE'
                     mat.use_backface_culling = not params.get('TwoSided',False)
 
                     if 'Normal' in params:
@@ -313,10 +321,10 @@ def ImportT3D(filename, mat=None, mat_object=None):
                     parent_mat_name = params['Parent'].split('.')[-1].rstrip('\"\'')
                     if logging: print(f"{parent_mat_name} Instance")
                     
-                    base_path = GetBasepath(params['Parent'])
+                    base_path = GetFullPath(base_dir, params['Parent'])
                     mat_path = TryGetFilepath(base_path)
                     if mat_path:
-                        ret = ImportT3D(mat_path, mat, mat_object)
+                        ret = ImportT3D(mat_path, mat, mat_object, base_dir=base_dir)
                         mat = ret[0]
                         graph_data = ret[1]
                         
@@ -336,45 +344,61 @@ def ImportT3D(filename, mat=None, mat_object=None):
                                             node.inputs['RGB'].default_value = (float(m.group(1)), float(m.group(2)), float(m.group(3)), 1)
                                             node.inputs['A'].default_value = float(m.group(4))
                                         case 'TextureParameterValues':
-                                            base_path = GetBasepath(value_text)
-                                            texture_path = TryGetFilepath(base_path)
-                                            if texture_path:
+                                            base_path = GetFullPath(base_dir, value_text)
+                                            tex_path = TryGetFilepath(base_path)
+                                            if tex_path:
                                                 colorspace = node.image.colorspace_settings.name if node.image else None
-                                                #print(texture_path)
-                                                node.image = bpy.data.images.load(texture_path, check_existing=True)
+                                                #print(tex_path)
+                                                node.image = bpy.data.images.load(tex_path, check_existing=True)
                                                 if colorspace: node.image.colorspace_settings.name = colorspace
                                             else: print(f"Missing Texture \"{base_path}\"")
-                    else: print(f"Missing Material \"{base_path}\"")
+                    else: print(f"Couldn't Find Material \"{base_path}\"")
 
     if logging: print(f"Imported {mat_name}: {(time.time() - t0) * 1000:.2f}ms")
     return (mat, graph_data)
-def ImportObjectMaterials(object, force=False):
+def ImportObjectMaterials(object, base_dir="", force=False):
     mesh = object.data
     for i, mat in enumerate(mesh.materials):
         if not mat: continue
         spl = mat.name.split('.')
         mat_name = spl[0]
         if len(spl) > 1 and mat_name in bpy.data.materials:
-            mat_candidate = bpy.data.materials[mat_name]
-            #bpy.data.materials.remove(mat)
-            mesh.materials[i] = mat = mat_candidate
+            #bpy.data.materials.remove(mat) # TODO: this breaks multi model FBX's, defer, FBX caller should clean
+            mesh.materials[i] = mat = bpy.data.materials[mat_name]
             if not force:
                 print(f"Found Existing Material: {mat_name}")
                 continue
-        mat_files = glob.glob(f"{export_dir}\\**\\{mat_name}.T3D", recursive=True)
-        if len(mat_files) > 0: mesh.materials[i] = ImportT3D(mat_files[0], mat, object)[0]
+        mat_files = glob.glob(f"{base_dir}\\**\\{mat_name}.T3D", recursive=True)
+        if len(mat_files) > 0: mesh.materials[i] = ImportT3D(mat_files[0], mat, object, base_dir=base_dir)[0]
         else: print(f"Failed to find {mat_name}!")
-def ImportObjectsMaterials(objects, force=False):
+def ImportObjectsMaterials(objects, base_dir="", force=False):
     if logging: print(f"Import Materials of {len(objects)} Objects")
     t0_objects = time.time()
-    for object in objects: ImportObjectMaterials(object, force)
+    mat_dict = {} # TODO: use dictionary to prevent duplicates
+    for object in objects:
+        mesh = object.data
+        for i, mat in enumerate(mesh.materials):
+            if not mat: continue
+            spl = mat.name.split('.')
+            mat_name = spl[0]
+            if len(spl) > 1 and mat_name in bpy.data.materials:
+                mesh.materials[i] = mat = bpy.data.materials[mat_name] # TODO: should materials[i] assignment be here?
+                if not force: print(f"Found Existing Material: {mat_name}")
+            mat_dict[mat] = (mat_name, object)
+    for mat in mat_dict:
+        tup = mat_dict[mat]
+        mat_name = tup[0]
+        object = tup[1]
+        mat_files = glob.glob(f"{base_dir}\\**\\{mat_name}.T3D", recursive=True)
+        if len(mat_files) > 0: ImportT3D(mat_files[0], mat, object, base_dir=base_dir)[0]
+        else: print(f"Failed to find {mat_name}!")
     if logging: print(f"Import: {(time.time() - t0_objects)*1000:.2f}ms\n")
-def ImportSelectedObjectMaterials(force=True): ImportObjectsMaterials(filter(lambda o: o.type == 'MESH', bpy.context.selected_objects), force)
+def ImportSelectedObjectMaterials(base_dir="", force=True): ImportObjectsMaterials(filter(lambda o: o.type == 'MESH', bpy.context.selected_objects), base_dir, force)
 
-#ImportT3D(filename)
-#ImportSelectedObjectMaterials()
+#ImportT3D(filename, base_dir=base_dir)
+#ImportSelectedObjectMaterials(base_dir=base_dir)
 
-
+def EvalBaseDir(self): return GuessBaseDir(self.directory) if self.base_directory == "" else self.base_directory
 def menu_import_t3d(self, context): self.layout.operator(ImportT3D_Operator.bl_idname, text="Unreal Engine Material (.T3D)")
 class ImportT3D_Operator(Operator, ImportHelper):
     """Import Unreal Engine .T3D Material File"""
@@ -383,8 +407,10 @@ class ImportT3D_Operator(Operator, ImportHelper):
     filename_ext = ".T3D"
     filter_glob: StringProperty(default="*.T3D", options={'HIDDEN'}, maxlen=255)
 
+    base_directory: StringProperty(name="Base Directory", description="Leave blank for auto detect. Directory which is the root of all the exported files. T3D files will refer to \"Texture=\" starting at this path.")
+
     def execute(self, context): 
-        ImportT3D(self.filepath)
+        ImportT3D(self.filepath, base_dir=EvalBaseDir(self))
         return {'FINISHED'}
 class ImportT3D_Materials(Operator):
     """Import Unreal Engine .T3D Materials"""
@@ -392,7 +418,7 @@ class ImportT3D_Materials(Operator):
     bl_label = "Import Unreal Engine Materials"
 
     def execute(self, context): 
-        ImportSelectedObjectMaterials()
+        ImportSelectedObjectMaterials()# TODO: get base path from model filepath
         return {'FINISHED'}
 def menu_import_fbx_t3d(self, context): self.layout.operator(ImportFBX_T3D_Operator.bl_idname, text="Unreal Engine FBX & Materials (.fbx)")
 class ImportFBX_T3D_Operator(Operator, ImportHelper):
@@ -412,6 +438,7 @@ class ImportFBX_T3D_Operator(Operator, ImportHelper):
             ('SHOW', "Show", "Show Colliders")
         )
     )
+    base_directory: StringProperty(name="Base Directory", description="Leave blank for auto detect. Directory which is the root of all the exported files. T3D files will refer to \"Texture=\" starting at this path.")
 
     def execute(self, context):
         for file in self.files:
@@ -426,7 +453,7 @@ class ImportFBX_T3D_Operator(Operator, ImportHelper):
                     object.visible_camera = object.visible_diffuse = object.visible_glossy = object.visible_transmission = object.visible_volume_scatter = object.visible_shadow = False
                     object.select_set(False)
                     object.hide_set(self.collider_mode == 'HIDE')
-            ImportSelectedObjectMaterials()
+            ImportSelectedObjectMaterials(base_dir=EvalBaseDir(self))
         return {'FINISHED'}
 
 register_classes = ( ImportT3D_Operator, ImportT3D_Materials, ImportFBX_T3D_Operator )
