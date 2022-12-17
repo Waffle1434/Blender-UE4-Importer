@@ -9,7 +9,8 @@ filename = "MI_Trim_A_Red2.T3D"
 #base_dir = "F:\Art\Assets"
 filename = bpy.path.abspath("//" + filename)
 logging = False
-
+mute_ior = True
+mute_fresnel = True
 
 t3d_block = re.compile(r"( *)Begin\s+(\w+)\s+(?:Class=(.+?)\s+)?Name=\"(.+?)\"(.*?)\r?\n\1End\s+\2", re.DOTALL | re.IGNORECASE)
 block_parameters = re.compile(r"(\w+(?:\(\d+\))?)=(.+?)\r?\n", re.MULTILINE)
@@ -69,6 +70,10 @@ param_x = 'MaterialExpressionEditorX'
 param_y = 'MaterialExpressionEditorY'
 #safety_override = False
 
+def DeDuplicateName(name):
+    i = name.rfind('.')
+    return name[:i] if i >= 0 else name
+
 def SetupNode(node_tree, name, mapping, node_data): # TODO: inline
     node = node_tree.nodes.new(mapping.bl_idname)
     node.name = name
@@ -80,23 +85,26 @@ def SetupNode(node_tree, name, mapping, node_data): # TODO: inline
     node.use_custom_color = mapping.color != None
     if mapping.color: node.color = mapping.color
 
-    if mapping.bl_idname == 'ShaderNodeTexImage':
-        rgb_in = node.outputs['Color']
-        if node_data.params.get('SamplerType') == 'SAMPLERTYPE_Normal':
-            rgb2n = node_tree.nodes.new('ShaderNodeGroup')
-            rgb2n.node_tree = bpy.data.node_groups['RGBtoNormal']
-            rgb2n.hide = True
-            SetPos(rgb2n, param_x, param_y, node_data.params)
-            rgb2n.location += Vector((-50,30))
-            node_tree.links.new(node.outputs['Color'], rgb2n.inputs['RGB'])
-            rgb_in = rgb2n.outputs['Normal']
+    match mapping.bl_idname:
+        case 'ShaderNodeTexImage':
+            rgb_in = node.outputs['Color']
+            if node_data.params.get('SamplerType') == 'SAMPLERTYPE_Normal':
+                rgb2n = node_tree.nodes.new('ShaderNodeGroup')
+                rgb2n.node_tree = bpy.data.node_groups['RGBtoNormal']
+                rgb2n.hide = True
+                SetPos(rgb2n, param_x, param_y, node_data.params)
+                rgb2n.location += Vector((-50,30))
+                node_tree.links.new(node.outputs['Color'], rgb2n.inputs['RGB'])
+                rgb_in = rgb2n.outputs['Normal']
 
-        rgba = node_tree.nodes.new('ShaderNodeGroup')
-        rgba.node_tree = bpy.data.node_groups['RGBA']
-        rgba.hide = True
-        node_tree.links.new(rgb_in, rgba.inputs['RGB'])
-        node_tree.links.new(node.outputs['Alpha'], rgba.inputs['A'])
-        node_data.link_indirect = rgba.outputs
+            rgba = node_tree.nodes.new('ShaderNodeGroup')
+            rgba.node_tree = bpy.data.node_groups['RGBA']
+            rgba.hide = True
+            node_tree.links.new(rgb_in, rgba.inputs['RGB'])
+            node_tree.links.new(node.outputs['Alpha'], rgba.inputs['A'])
+            node_data.link_indirect = rgba.outputs
+        case 'ShaderNodeMixRGB':
+            node.inputs['Fac'].default_value = 0
     return node
 def ParseParams(text, regex=block_parameters): return { m.group(1): m.group(2) for m in regex.finditer(text) }
 def GuessBaseDir(filename): return filename[:filename.find("Game")] # Unreal defaults to starting path with "Game" on asset export
@@ -153,7 +161,9 @@ def LinkSocket(mat, nodes_data, node_data, param_name, expression_text, socket_m
 
             if node_data.input_remap and param_name in node_data.input_remap: dst_socket = node_data.input_remap[param_name]
 
-            if src_socket and dst_socket: mat.node_tree.links.new(src_socket, dst_socket)
+            if src_socket and dst_socket:
+                link = mat.node_tree.links.new(src_socket, dst_socket)
+                if mute_fresnel and src_socket.node.bl_idname == 'ShaderNodeFresnel': link.is_muted = True
             else: print(f"FAILED LINK: {node.name}.{param_name}")
         else: print(f"MISSING NODE: {str(link_node_name)}")
     else: print(f"FAILED LINK, PARSE FAIL: {expression_text}")
@@ -289,6 +299,7 @@ def ImportT3D(filename, mat=None, mat_object=None, base_dir=""):
                         case 'BLEND_Translucent':
                             mat.blend_method = 'BLEND'
                             mat.shadow_method = 'HASHED'
+                            node.inputs['Transmission'].default_value = 1
                         case 'BLEND_Masked':
                             mat.blend_method = 'CLIP'
                             mat.shadow_method = 'CLIP'
@@ -312,6 +323,10 @@ def ImportT3D(filename, mat=None, mat_object=None, base_dir=""):
                         node_data.input_remap = { 'Normal':n2rgb.inputs['Normal'] }
 
                     LinkSockets(mat, nodes_data, node_data)
+                    
+                    ior = node.inputs['IOR']
+                    if ior.is_linked: ior.links[0].is_muted = mute_ior
+
                     # TODO: store output node in nodes_data?
                 case 'MaterialInstanceConstant':
                     mat_remaining_text = object_body[m_object.end(0):]
@@ -393,13 +408,51 @@ def ImportObjectsMaterials(objects, base_dir="", force=False):
         if len(mat_files) > 0: ImportT3D(mat_files[0], mat, object, base_dir=base_dir)[0]
         else: print(f"Failed to find {mat_name}!")
     if logging: print(f"Import: {(time.time() - t0_objects)*1000:.2f}ms\n")
-def ImportSelectedObjectMaterials(base_dir="", force=True): ImportObjectsMaterials(filter(lambda o: o.type == 'MESH', bpy.context.selected_objects), base_dir, force)
+def GetMeshObjects(objects): return filter(lambda o: o.type == 'MESH', objects)
+def ImportSelectedObjectMaterials(base_dir="", force=True): ImportObjectsMaterials(GetMeshObjects(bpy.context.selected_objects), base_dir, force)
+def ImportUnrealFbx(filepath, collider_mode='NONE'):
+    bpy.ops.import_scene.fbx(filepath=filepath)
+    for object in bpy.context.selected_objects:
+        if object.name.startswith("UCX_"): # Collision
+            if collider_mode == 'NONE':
+                bpy.data.objects.remove(object)
+                continue
+            object.display_type = 'WIRE'
+            object.hide_render = True
+            object.visible_camera = object.visible_diffuse = object.visible_glossy = object.visible_transmission = object.visible_volume_scatter = object.visible_shadow = False
+            object.select_set(False)
+            object.hide_set(collider_mode == 'HIDE')
+def ImportUnrealFbxAndMaterials(filepath, base_dir, collider_mode='NONE'):
+        ImportUnrealFbx(filepath, collider_mode)
+        mesh_objects = list(GetMeshObjects(bpy.context.selected_objects))
+        ImportObjectsMaterials(mesh_objects, base_dir, True)
+        return (mesh_objects)
+def ReimportModels(objects, base_dir, collider_mode='NONE'):
+    mesh_set = set()
+    for object in objects: mesh_set.add(object.data)
+    for mesh in mesh_set:
+        mesh_name = DeDuplicateName(mesh.name)
+        mesh_files = glob.glob(f"{base_dir}\\**\\*{mesh_name}.FBX", recursive=True)
+        if len(mesh_files) > 0:
+            mesh_objects = ImportUnrealFbxAndMaterials(mesh_files[0], base_dir, collider_mode)
+            object = mesh_objects[0]
+            mesh.user_remap(object.data)
+            for object in mesh_objects: bpy.data.objects.remove(object)
+            # TODO: delete old data?
+        else: print(f"Failed to Find Mesh \"{mesh_name}\"")
+def ImportFbxAndReimport(filepath, base_dir="", collider_mode='NONE'):
+    bpy.ops.import_scene.fbx(filepath=filepath)
+    if base_dir == "": base_dir = GuessBaseDir(filepath)
+    ReimportModels(GetMeshObjects(bpy.context.selected_objects), base_dir, collider_mode)
+
 
 #ImportT3D(filename, base_dir=base_dir)
 #ImportSelectedObjectMaterials(base_dir=base_dir)
+fbx_path = r"F:\Art\Assets\Game\ModSci_Engineer\Maps\Example_Stationary.FBX"
+#ImportFbxAndReimport(fbx_path)
+
 
 def EvalBaseDir(self): return GuessBaseDir(self.directory) if self.base_directory == "" else self.base_directory
-def menu_import_t3d(self, context): self.layout.operator(ImportT3D_Operator.bl_idname, text="Unreal Engine Material (.T3D)")
 class ImportT3D_Operator(Operator, ImportHelper):
     """Import Unreal Engine .T3D Material File"""
     bl_idname = "unreal_import.t3d"
@@ -418,9 +471,8 @@ class ImportT3D_Materials(Operator):
     bl_label = "Import Unreal Engine Materials"
 
     def execute(self, context): 
-        ImportSelectedObjectMaterials()# TODO: get base path from model filepath
+        ImportSelectedObjectMaterials() # TODO: get base path from model filepath
         return {'FINISHED'}
-def menu_import_fbx_t3d(self, context): self.layout.operator(ImportFBX_T3D_Operator.bl_idname, text="Unreal Engine FBX & Materials (.fbx)")
 class ImportFBX_T3D_Operator(Operator, ImportHelper):
     """Import Unreal Engine .FBX & .T3D Materials"""
     bl_idname = "unreal_import.fbx_t3d"
@@ -439,22 +491,17 @@ class ImportFBX_T3D_Operator(Operator, ImportHelper):
         )
     )
     base_directory: StringProperty(name="Base Directory", description="Leave blank for auto detect. Directory which is the root of all the exported files. T3D files will refer to \"Texture=\" starting at this path.")
+    reimport_models: BoolProperty(name="Reimport Models", description="Fix FBX material errors by re-importing each mesh individually", default=True)
 
     def execute(self, context):
+        base_dir = EvalBaseDir(self)
         for file in self.files:
-            bpy.ops.import_scene.fbx(filepath=(self.directory + file.name))
-            for object in context.selected_objects:
-                if object.name.startswith("UCX_"): # Collision
-                    if self.collider_mode == 'NONE':
-                        bpy.data.objects.remove(object)
-                        continue
-                    object.display_type = 'WIRE'
-                    object.hide_render = True
-                    object.visible_camera = object.visible_diffuse = object.visible_glossy = object.visible_transmission = object.visible_volume_scatter = object.visible_shadow = False
-                    object.select_set(False)
-                    object.hide_set(self.collider_mode == 'HIDE')
-            ImportSelectedObjectMaterials(base_dir=EvalBaseDir(self))
+            ImportUnrealFbxAndMaterials(self.directory + file.name, base_dir, self.collider_mode)
+            if self.reimport_models and 'Fbx Default Material' in bpy.data.materials: ReimportModels(GetMeshObjects(bpy.context.selected_objects), base_dir, self.collider_mode)
         return {'FINISHED'}
+
+def menu_import_t3d(self, context): self.layout.operator(ImportT3D_Operator.bl_idname, text="Unreal Engine Material (.T3D)")
+def menu_import_fbx_t3d(self, context): self.layout.operator(ImportFBX_T3D_Operator.bl_idname, text="Unreal Engine FBX & Materials (.fbx)")
 
 register_classes = ( ImportT3D_Operator, ImportT3D_Materials, ImportFBX_T3D_Operator )
 
