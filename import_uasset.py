@@ -4,10 +4,10 @@ from struct import *
 
 #filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\M_Base_Trim.uasset"
 #filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\Example_Stationary.umap"
-#filepath = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\M_Base_Trim.uasset"
-filepath = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Example_Stationary.umap"
+filepath = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\M_Base_Trim.uasset"
+#filepath = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\Example_Stationary.umap"
 
-logging = False
+logging = True
 separate_bulkdata_files = False
 
 class ByteStream:
@@ -62,14 +62,14 @@ class FName:
     def __str__(self) -> str: return self.FullName()
     def __repr__(self) -> str: return str(self)
 class FExpressionInput:
-    def __init__(self, asset:UAsset, editor=True):
+    def __init__(self, asset:UAsset, len, editor=True):
         self.node = asset.GetExport(asset.f.ReadInt32()) if editor else None
         self.node_output_i = asset.f.ReadInt32()
-        self.input_i = asset.f.ReadInt32()
+        self.input_name = asset.f.ReadFString()
         if editor:
             self.mask = asset.f.ReadInt32()
             self.mask_rgba = (asset.f.ReadInt32(),asset.f.ReadInt32(),asset.f.ReadInt32(),asset.f.ReadInt32())
-    def __repr__(self) -> str: return f"{self.node}({self.node_output_i}) (Mask={self.mask}, Mask RGBA={str(self.mask_rgba).replace(' ','')}"
+    def __repr__(self) -> str: return f"{self.node}({self.node_output_i}) {self.input_name}(Mask={self.mask}, Mask RGBA={str(self.mask_rgba).replace(' ','')}"
 class ArrayDesc:
     def __init__(self, f, b32=True):
         if b32: self.count, self.offset = (f.ReadInt32(), f.ReadInt32())
@@ -124,10 +124,7 @@ class Export:
             return
         
         asset.f.Seek(self.serial_desc.offset)
-        while True:
-            prop = UProperty() # TODO: self.TryReadProperty?
-            if prop.TryRead(asset): self.properties.append(prop)
-            else: break
+        asset.ReadProperties(self.properties)
 
         #match export_class_type: case "Enum" | "UserDefinedEnum": export.enum = # TODO: post "normal export" data
         extras_len = (self.serial_desc.offset + self.serial_desc.count) - asset.f.Position()
@@ -157,8 +154,12 @@ class UProperty:
                     self.guid = asset.TryReadPropertyGuid()
 
                 header = False
+                p = f.Position()
                 match self.struct_type:
-                    #case "FloatRange": raise
+                    case "Guid": self.value = f.ReadGuid()
+                    case "Vector" | "Rotator":
+                        if header: self.guid = asset.TryReadPropertyGuid()
+                        self.value = (f.ReadFloat(), f.ReadFloat(), f.ReadFloat())
                     case "Color":
                         if header: self.guid = asset.TryReadPropertyGuid()
                         bgra = f.ReadBytes(4)
@@ -166,19 +167,23 @@ class UProperty:
                     case "LinearColor":
                         if header: self.guid = asset.TryReadPropertyGuid()
                         self.value = (f.ReadFloat(), f.ReadFloat(), f.ReadFloat(), f.ReadFloat()) # RGBA
-                    case "Vector" | "Rotator":
-                        if header: self.guid = asset.TryReadPropertyGuid()
-                        self.value = (f.ReadFloat(), f.ReadFloat(), f.ReadFloat())
-                    case "Guid": self.value = f.ReadGuid()
-                    case "ExpressionInput": self.value = FExpressionInput(asset)
                     case "ColorMaterialInput" | "ScalarMaterialInput" | "VectorMaterialInput":
                         p = f.Position()
-                        self.value = asset.GetExport(f.ReadInt32())
+                        self.value = asset.GetExport(f.ReadInt32())# TODO: other data is default value?
                         f.Seek(p + self.len)
+                    case "ExpressionInput": self.value = FExpressionInput(asset, self.len)
+                    case "ExpressionOutput":
+                        self.value = []
+                        asset.ReadProperties(self.value)
                     case _:
                         self.value = [x for x in f.ReadBytes(self.len)]
                         if logging: print(f"Uknown Struct Type \"{self.struct_type}\"")
                         #raise Exception(f"Uknown Struct Type \"{struct_type}\"")
+                p_diff = f.Position() - (p + self.len)
+                if p_diff != 0:
+                    f.Seek(p)
+                    self.raw = [x for x in f.ReadBytes(self.len)]
+                    if logging: print(f"Length Mismatch! {self.struct_type} : {p_diff}")
                 
                 if self.len == 0: raise
             case "ArrayProperty":
@@ -205,13 +210,22 @@ class UProperty:
                         next = f.Position() + self.array_size
                         try:
                             element_size = int(self.array_size / element_count)
+                            single_prop = self.array_el_full_type not in ("FunctionExpressionInput","FunctionExpressionOutput")
                             for i in range(element_count):
                                 prop = UProperty()
-                                prop.name, prop.type, prop.struct_type, prop.len = ("", self.array_el_type, self.array_el_full_type, element_size)
-                                if prop.TryReadData(asset, False): self.value.append(prop)
+                                if single_prop:
+                                    prop.name, prop.type, prop.struct_type, prop.len = ("", self.array_el_type, self.array_el_full_type, element_size)
+                                    if prop.TryReadData(asset, False): self.value.append(prop)
+                                else:
+                                    properties = []
+                                    asset.ReadProperties(properties)
+                                    self.value.append(properties)
                         #except: pass
                         finally:
-                            f.Seek(next)
+                            p_diff = next - f.Position()
+                            if p_diff != 0:
+                                f.Seek(next)
+                                if logging: print(f"{self.array_name} Array Position Mismatch: {p_diff}")
                 else:
                     self.value = []
                     #size_1 = int(self.len / element_count)
@@ -281,6 +295,11 @@ class UAsset:
         else: return None #raise Exception("Invalid Package Index of 0")
     def TryReadPropertyGuid(self) -> uuid.UUID: return self.f.ReadGuid() if self.version_ue4 >= 503 and self.f.ReadBool() else None
     #def TryReadProperty(self): # TODO
+    def ReadProperties(self, properties:list, header=True):
+        while True:
+            prop = UProperty() # TODO: self.TryReadProperty?
+            if prop.TryRead(self, header): properties.append(prop)
+            else: break
     def ReadHeader(self):
         f = self.f
         sig = f.ReadUInt32()
@@ -387,4 +406,5 @@ class UAsset:
                     export.ReadProperties(self, i, i_export_f)
         print(f"Imported {self} in {time.time() - t0:.2f}s")
         print("!")
-uasset = UAsset(filepath)
+asset = UAsset(filepath)
+print("Done")
