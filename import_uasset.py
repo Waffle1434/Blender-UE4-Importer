@@ -1,20 +1,22 @@
+from __future__ import annotations
 import bpy, io, uuid
 from struct import *
 
+filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\M_Base_Trim.uasset"
 #filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\Example_Stationary.umap"
-filepath = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Example_Stationary.umap"
+#filepath = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Example_Stationary.umap"
 
 separate_bulkdata_files = False
 
 class ByteStream:
-    def __init__(self, byte_stream):
+    def __init__(self, byte_stream:io.BufferedReader):
         self.byte_stream = byte_stream
     
-    def ReadBytes(self, count): return self.byte_stream.read(count)
+    def ReadBytes(self, count) -> bytes: return self.byte_stream.read(count)
     def Seek(self, offset, mode=io.SEEK_SET): self.byte_stream.seek(offset, mode)
     
-    def ReadString(self, count, stopOnNull=False): return self.ReadBytes(count).decode('utf-8',errors='ignore').rstrip('\0')
-    def ReadString16(self, count, stopOnNull=False):
+    def ReadString(self, count, stopOnNull=False) -> str: return self.ReadBytes(count).decode('utf-8',errors='ignore').rstrip('\0')
+    def ReadString16(self, count, stopOnNull=False) -> str:
         if stopOnNull:
             s = ""
             for i in range(2*count):
@@ -42,16 +44,33 @@ class ByteStream:
 
     def ReadIntBool(self): return self.ReadInt32() == 1
 
-    def ReadGuid(self): return uuid.UUID(bytes_le=self.ReadBytes(16))
-    def ReadFString(self):
+    def ReadGuid(self) -> uuid.UUID: return uuid.UUID(bytes_le=self.ReadBytes(16))
+    def ReadFString(self) -> str:
         length = self.ReadInt32()
         if length < 0: return self.ReadBytes(-2*length)[:-2].decode('utf-16')
         else: return self.ReadBytes(length)[:-1].decode('ascii')
-    def ReadFName(self, names):
-        i_name = self.ReadInt32()
-        number = self.ReadInt32()
-        return names[i_name]
+    def ReadFName(self, names) -> FName: return FName(self, names)
 
+class FName:
+    def __init__(self, f:ByteStream, names):
+        i_name = f.ReadInt32()
+        self.i = f.ReadInt32()
+        self.str = names[i_name]
+    def FullName(self) -> str: return f"{self.str}_{self.i - 1}" if self.i > 0 else self.str
+    def __str__(self) -> str: return self.FullName()
+    def __repr__(self) -> str: return str(self)
+class FExpressionInput:
+    def __init__(self, asset:UAsset, editor=True):
+        self.node = asset.GetExport(asset.f.ReadInt32()) if editor else None
+        self.node_output_i = asset.f.ReadInt32()
+        self.input_i = asset.f.ReadInt32()
+        if editor:
+            self.mask = asset.f.ReadInt32()
+            self.mask_r = asset.f.ReadInt32()
+            self.mask_g = asset.f.ReadInt32()
+            self.mask_b = asset.f.ReadInt32()
+            self.mask_a = asset.f.ReadInt32()
+    def __repr__(self) -> str: return f"{self.node}({self.node_output_i}) (Mask={self.mask}, Mask RGBA=({self.mask_r},{self.mask_g},{self.mask_b},{self.mask_a})), {self.node_output_i}"
 class ArrayDesc:
     def __init__(self, f, b32=True):
         if b32:
@@ -69,13 +88,14 @@ class EngineVersion:
         self.branch = branch
     def Read(f): return EngineVersion(f.ReadUInt16(), f.ReadUInt16(), f.ReadUInt16(), f.ReadUInt32(), f.ReadFString())
 class Import:
-    def __init__(self, f, names):
+    def __init__(self, f:ByteStream, names):
         self.class_package = f.ReadFName(names)
         self.class_name = f.ReadFName(names)
         self.outer_index = f.ReadInt32()
         self.object_name = f.ReadFName(names)
+    def __repr__(self) -> str: f"{self.object_name}({self.class_package}.{self.class_name})"
 class Export:
-    def __init__(self, f, asset):
+    def __init__(self, f:ByteStream, asset:UAsset):
         self.class_index = f.ReadInt32()
         self.super_index = f.ReadInt32()
         if asset.version_ue4 >= 508: self.template_index = f.ReadInt32()
@@ -96,6 +116,8 @@ class Export:
             self.create_before_ser_depends_size = f.ReadInt32()
             self.ser_before_create_depends_size = f.ReadInt32()
             self.create_before_create_depends_size = f.ReadInt32()
+        self.properties = []
+    def __repr__(self) -> str: return f"{self.object_name} [{len(self.properties)}]"
 class UAsset:
     def GetImport(self, i) -> Import: return self.imports[-i - 1]
     def GetExport(self, i) -> Export: return self.exports[i - 1]
@@ -217,7 +239,7 @@ class UAsset:
 
                     # TODO: PackageIndex class
                     export_class = self.TryGetImport(export.class_index)
-                    export_class_type = export_class.object_name if export_class else None
+                    export_class_type = export_class.object_name.str if export_class else None
 
                     match export_class_type:
                         case "Level" | "Enum" | "UserDefinedEnum" | "Function": raise
@@ -227,7 +249,6 @@ class UAsset:
                             elif export_class_type.endswith("BlueprintGeneratedClass"): raise
                             #elif MainSerializer.PropertyTypeRegistry.ContainsKey(exportClassType) || exportClassType == "ClassProperty"
                             else: # Normal Export
-                                export.properties = []
                                 while True:
                                     #start_offset = f.byte_stream.tell()
                                     prop = UProperty() # TODO: self.TryReadProperty?
@@ -241,10 +262,10 @@ class UProperty: # TODO: Arrays & structs exclude header
     #def __init__(self): raise
     def TryRead(self, asset:UAsset, header=True):
         f = asset.f
-        self.name = f.ReadFName(asset.names)
+        self.name = f.ReadFName(asset.names).FullName()
         if self.name == "None": return None
 
-        self.type = f.ReadFName(asset.names)
+        self.type = f.ReadFName(asset.names).str
         self.len = f.ReadInt32()
         self.i_dupe = f.ReadInt32()
         
@@ -260,11 +281,11 @@ class UProperty: # TODO: Arrays & structs exclude header
                 if header: self.guid = asset.TryReadPropertyGuid()
             case "ByteProperty":
                 if header:
-                    self.enum_type = f.ReadFName(asset.names)
+                    self.enum_type = f.ReadFName(asset.names).str
                     self.guid = asset.TryReadPropertyGuid()
                 match self.len:
                     case 1: self.value = f.ReadUInt8()
-                    case 8: self.value = f.ReadFName(asset.names)
+                    case 8: self.value = f.ReadFName(asset.names).FullName()
                     case 0: raise
                     case _: raise
             case "Int8Property":
@@ -296,31 +317,31 @@ class UProperty: # TODO: Arrays & structs exclude header
                 self.value = f.ReadDouble()
             case "EnumProperty":
                 if header:
-                    self.enum_type = f.ReadFName(asset.names)
+                    self.enum_type = f.ReadFName(asset.names).str
                     self.guid = asset.TryReadPropertyGuid()
-                self.value = f.ReadFName(asset.names)
+                self.value = f.ReadFName(asset.names).FullName()
             case "StrProperty":
                 if header: self.guid = asset.TryReadPropertyGuid()
                 self.value = f.ReadFString()
             case "NameProperty":
                 if header: self.guid = asset.TryReadPropertyGuid()
-                self.value = f.ReadFName(asset.names)
+                self.value = f.ReadFName(asset.names).FullName()
             case "ObjectProperty":
                 if header: self.guid = asset.TryReadPropertyGuid()
                 self.value = asset.DecodePackageIndex(f.ReadInt32())
             case "MulticastDelegateProperty":
                 if header: self.guid = asset.TryReadPropertyGuid()
                 self.value = []
-                for i in range(f.ReadInt32()): self.value.append((f.ReadInt32(), f.ReadFName(asset.names)))
+                for i in range(f.ReadInt32()): self.value.append((f.ReadInt32(), f.ReadFName(asset.names).FullName()))
             case "StructProperty":
                 if header:
-                    struct_type = f.ReadFName(asset.names)
+                    self.struct_type = f.ReadFName(asset.names).str
                     if asset.version_ue4 >= 441: struct_guid = f.ReadGuid()
                     self.guid = asset.TryReadPropertyGuid()
                 custom_ser = False
 
                 header = False
-                match struct_type:
+                match self.struct_type:
                     case "FloatRange": raise
                     case "Color":
                         if header: self.guid = asset.TryReadPropertyGuid()
@@ -329,11 +350,21 @@ class UProperty: # TODO: Arrays & structs exclude header
                     case "Vector" | "Rotator":
                         if header: self.guid = asset.TryReadPropertyGuid()
                         self.value = (f.ReadFloat(), f.ReadFloat(), f.ReadFloat())
-                        raise
+                    case "Guid":
+                        self.value = f.ReadGuid()
+                    case "ExpressionInput":
+                        #p = f.byte_stream.tell()
+                        self.value = FExpressionInput(asset)
+                        #f.Seek(p)
+                        #self.value = [x for x in f.ReadBytes(self.len)]
+                    case "ColorMaterialInput" | "ScalarMaterialInput" | "VectorMaterialInput":
+                        p = f.byte_stream.tell()
+                        self.value = asset.GetExport(f.ReadInt32())
+                        f.Seek(p + self.len)
                     #case "RichCurveKey" | "MovieSceneTrackIdentifier" | "MovieSceneFloatChannel": raise
                     case _:
-                        self.value = f.ReadBytes(self.len)
-                        print(f"Uknown Struct Type \"{struct_type}\"")
+                        self.value = [x for x in f.ReadBytes(self.len)]
+                        print(f"Uknown Struct Type \"{self.struct_type}\"")
                         #raise Exception(f"Uknown Struct Type \"{struct_type}\"")
                 
                 if self.len == 0: raise
@@ -341,28 +372,27 @@ class UProperty: # TODO: Arrays & structs exclude header
                 else: # Read NTPL'''
             case "ArrayProperty":
                 if header:
-                    array_type = f.ReadFName(asset.names)
+                    self.array_type = f.ReadFName(asset.names).str
                     self.guid = asset.TryReadPropertyGuid()
                 element_count = f.ReadInt32()
-                if array_type == "StructProperty":
+                if self.array_type == "StructProperty":
                     if asset.version_ue4 >= 500:
-                        name = f.ReadFName(asset.names)
-                        if name == "None": raise
-                        array_type_2 = f.ReadFName(asset.names)
-                        if array_type_2 == "None": raise
-                        if array_type != array_type_2: raise
-                        struct_length = f.ReadInt64()
-                        full_type = f.ReadFName(asset.names)
-                        struct_guid = f.ReadGuid()
-                        property_guid = asset.TryReadPropertyGuid()
+                        self.array_name = f.ReadFName(asset.names).FullName()
+                        if self.array_name == "None": raise
+                        self.array_type_2 = f.ReadFName(asset.names).str
+                        if self.array_type_2 == "None": raise
+                        if self.array_type != self.array_type_2: raise
+                        self.struct_length = f.ReadInt64()
+                        self.full_type = f.ReadFName(asset.names).str
+                        self.struct_guid = f.ReadGuid()
+                        self.guid = asset.TryReadPropertyGuid()
                     else: raise
 
                     if element_count == 0: raise
                     else:
+                        self.value = []
                         if False:
-                            self.value = []
-                            for i_element in range(element_count):
-                                raise
+                            for i in range(element_count):
                                 prop = UProperty()
                                 if prop.TryRead(asset, False): self.value.append(prop)
                 else:
@@ -371,10 +401,12 @@ class UProperty: # TODO: Arrays & structs exclude header
                     size_2 = int((self.len - 4) / element_count)
                     for i in range(element_count):
                         prop = UProperty()
-                        prop.type = array_type
+                        prop.name = str(i)
+                        prop.type = self.array_type
                         if prop.TryReadData(asset, False): self.value.append(prop)
             case _: raise Exception(f"Uknown Property Type \"{self.type}\"")
         return True
 
+    def __repr__(self) -> str: return f"{self.name}({self.struct_type if hasattr(self,'struct_type') else self.type}) = {self.value}"
 
 UAsset(filepath)
