@@ -1,11 +1,12 @@
 from __future__ import annotations
 import bpy, io, uuid, time
 from struct import *
+from mathutils import *
 
-#filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\M_Base_Trim.uasset"
-#filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\Example_Stationary.umap"
+#filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\Samples\M_Base_Trim.uasset"
+filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\Samples\Example_Stationary.umap"
 #filepath = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\M_Base_Trim.uasset"
-filepath = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\Example_Stationary.umap"
+#filepath = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\Example_Stationary.umap"
 
 logging = True
 
@@ -13,6 +14,8 @@ class ByteStream:
     def __init__(self, byte_stream:io.BufferedReader): self.byte_stream = byte_stream
     def __repr__(self) -> str: return f"\"{self.byte_stream.name}\"[{'Closed' if self.byte_stream.closed else self.Position()}]"
     
+    def EnsureOpen(self):
+        if self.byte_stream.closed: self.byte_stream = open(self.byte_stream.name, self.byte_stream.mode)
     def ReadBytes(self, count) -> bytes: return self.byte_stream.read(count)
     def Seek(self, offset, mode=io.SEEK_SET): self.byte_stream.seek(offset, mode)
     def Position(self): return self.byte_stream.tell()
@@ -121,22 +124,32 @@ class Export:
         self.properties = None
         self.export_class = asset.TryGetImport(self.class_index)
         self.export_class_type = self.export_class.object_name.str if self.export_class else None
-    def __repr__(self) -> str: return f"{self.object_name} [{len(self.properties)}]"
+    def __repr__(self) -> str: return f"{self.object_name} [{len(self.properties) if self.properties else 'Unread'}]"
     def ReadProperties(self):
         if self.properties: return
-        self.properties = []
+        self.properties = Properties()
 
         if self.export_class_type == "Function" or self.export_class_type.endswith("BlueprintGeneratedClass"):
             print(f"Skipping Export \"{self.export_class_type}\"")
             return
         
+        #self.asset.f.EnsureOpen()
         self.asset.f.Seek(self.serial_desc.offset)
-        self.asset.ReadProperties(self.properties)
+        self.properties.Read(self.asset)
 
         #match export_class_type: case "Enum" | "UserDefinedEnum": export.enum = # TODO: post "normal export" data
         extras_len = (self.serial_desc.offset + self.serial_desc.count) - self.asset.f.Position()
         if extras_len < 0: raise
         else: self.extras = self.asset.f.ReadBytes(extras_len) if extras_len > 0 else None
+class Properties(dict):
+    def Read(self, asset:UAsset, header=True):
+        while True:
+            prop = UProperty()
+            if prop.TryRead(asset, header): self[prop.name] = prop
+            else: break
+    def TryGetValue(self, key:str):
+        property = self.get(key)
+        return property.value if property else None
 class UProperty:
     def __repr__(self) -> str: return f"{self.name}({self.struct_type if hasattr(self,'struct_type') else self.type}) = {self.value}"
     def TryRead(self, asset:UAsset, header=True):
@@ -179,9 +192,7 @@ class UProperty:
                         self.value = asset.GetExport(f.ReadInt32())# TODO: other data is default value?
                         f.Seek(p + self.len)
                     case "ExpressionInput": self.value = FExpressionInput(asset, self.len)
-                    case "ExpressionOutput":
-                        self.value = []
-                        asset.ReadProperties(self.value)
+                    case "ExpressionOutput": self.value = Properties().Read(asset)
                     case _:
                         self.value = [x for x in f.ReadBytes(self.len)]
                         if logging: print(f"Uknown Struct Type \"{self.struct_type}\"")
@@ -224,9 +235,7 @@ class UProperty:
                                     prop.name, prop.type, prop.struct_type, prop.len = ("", self.array_el_type, self.array_el_full_type, element_size)
                                     if prop.TryReadData(asset, False): self.value.append(prop)
                                 else:
-                                    properties = []
-                                    asset.ReadProperties(properties)
-                                    self.value.append(properties)
+                                    self.value.append(Properties().Read(asset))
                         #except: pass
                         finally:
                             p_diff = next - f.Position()
@@ -250,6 +259,10 @@ class UProperty:
             case "ObjectProperty":
                 if header: self.guid = asset.TryReadPropertyGuid()
                 self.value = asset.DecodePackageIndex(f.ReadInt32())
+                if self.value and type(self.value) is Export:
+                    p = f.Position()
+                    self.value.ReadProperties()
+                    f.Seek(p)
             case "BoolProperty":
                 self.value = f.ReadBool()
                 if header: self.guid = asset.TryReadPropertyGuid()
@@ -291,6 +304,7 @@ class UProperty:
             case _: raise Exception(f"Uknown Property Type \"{self.type}\"")
         return True
 class UAsset:
+    def __init__(self, filepath): self.filepath = filepath
     def __repr__(self) -> str: return f"\"{self.f.byte_stream.name}\", {len(self.imports)} Imports, {len(self.exports)} Exports"
     def GetImport(self, i) -> Import: return self.imports[-i - 1]
     def GetExport(self, i) -> Export: return self.exports[i - 1]
@@ -302,11 +316,6 @@ class UAsset:
         else: return None #raise Exception("Invalid Package Index of 0")
     def TryReadPropertyGuid(self) -> uuid.UUID: return self.f.ReadGuid() if self.version_ue4 >= 503 and self.f.ReadBool() else None
     #def TryReadProperty(self): # TODO
-    def ReadProperties(self, properties:list, header=True):
-        while True:
-            prop = UProperty() # TODO: self.TryReadProperty?
-            if prop.TryRead(self, header): properties.append(prop)
-            else: break
     def ReadHeader(self):
         f = self.f
         sig = f.ReadUInt32()
@@ -351,12 +360,12 @@ class UAsset:
             for i in range(f.ReadInt32()): chunk_id = f.ReadInt32()
         elif version_ue4 >= 278: chunk_id = f.ReadInt32()
         if version_ue4 >= 507: self.preload_depends_desc = ArrayDesc(f)
-    def __init__(self, filepath, read_all=True):
+    def Read(self, read_all=True):
         t0 = time.time()
-        self.f = ByteStream(open(filepath, 'rb'))
+        self.f = ByteStream(open(self.filepath, 'rb'))
         self.ReadHeader()
         
-        self.names = []
+        self.names:list[str] = []
         if self.names_desc.TrySeek(self.f):
             for i in range(self.names_desc.count):
                 name = self.f.ReadFString()
@@ -375,9 +384,39 @@ class UAsset:
             for i in range(self.exports_desc.count):
                 self.exports[i].ReadProperties()
             self.f.byte_stream.close()
-        print(f"Imported {self} in {time.time() - t0:.2f}s")
-        print("!")
+            print(f"Imported {self} in {time.time() - t0:.2f}s")
+    def __enter__(self):
+        self.Read(False)
+        return self
+    def __exit__(self, *args): self.f.byte_stream.close()
 
-#asset = UAsset(filepath)
-asset = UAsset(filepath, False)
+def TryGetPropertyValue(properties:dict[str,UProperty], key:str):
+    property = properties.get(key)
+    return property.value if property else None
+
+with UAsset(filepath) as asset:
+    #asset.exports[600].ReadProperties()
+    for export in asset.exports:
+        match export.export_class_type:
+            case "PointLight":
+                export.ReadProperties()
+
+                light = bpy.data.lights.new(export.object_name.str, 'POINT')
+                light_obj = bpy.data.objects.new(light.name, light)
+                bpy.context.collection.objects.link(light_obj)
+
+                root_exp = export.properties.TryGetValue('RootComponent')
+                if root_exp:
+                    rel_loc = root_exp.properties.TryGetValue('RelativeLocation')
+                    if rel_loc: light_obj.location = Vector(rel_loc) * 0.01
+                
+                light_comp = export.properties.TryGetValue('LightComponent')
+                if light_comp:
+                    light_props = light_comp.properties
+                    intensity = light_props.TryGetValue('Intensity')
+                    if intensity: light.energy = intensity
+                    color = light_props.TryGetValue('LightColor')
+                    if color: light.color = Color(color[:3]) / 255.0
+                    cast = light_props.TryGetValue('CastShadows')
+                    if cast: light.cycles.cast_shadow = light.use_shadow = cast
 print("Done")
