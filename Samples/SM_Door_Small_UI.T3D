@@ -1,0 +1,35 @@
+Begin Object Class=/Script/Engine.StaticMesh Name="SM_Door_Small_UI"
+   Begin Object Class=/Script/UnrealEd.SceneThumbnailInfo Name="SceneThumbnailInfo_0"
+   End Object
+   Begin Object Class=/Script/NavigationSystem.NavCollision Name="NavCollision_0"
+   End Object
+   Begin Object Class=/Script/UnrealEd.FbxStaticMeshImportData Name="FbxStaticMeshImportData_0"
+   End Object
+   Begin Object Class=/Script/Engine.BodySetup Name="BodySetup_0"
+   End Object
+   Begin Object Class=/Script/Engine.AssetImportData Name="AssetImportData"
+   End Object
+   Begin Object Name="SceneThumbnailInfo_0"
+   End Object
+   Begin Object Name="NavCollision_0"
+   End Object
+   Begin Object Name="FbxStaticMeshImportData_0"
+      bRemoveDegenerates=False
+   End Object
+   Begin Object Name="BodySetup_0"
+      DefaultInstance=(ObjectType=ECC_WorldStatic,CollisionEnabled=NoCollision,CollisionProfileName="NoCollision",CollisionResponses=(ResponseArray=((Channel="Visibility",Response=ECR_Ignore),(Channel="Camera",Response=ECR_Ignore))))
+   End Object
+   Begin Object Name="AssetImportData"
+   End Object
+   SourceModels(0)=(BuildSettings=(bUseMikkTSpace=False,bRecomputeNormals=False,bRemoveDegenerates=False,bGenerateLightmapUVs=False),ScreenSize=(Default=1.000000))
+   SectionInfoMap=(Map=((0, (bEnableCollision=False))))
+   OriginalSectionInfoMap=(Map=((0, (bEnableCollision=False))))
+   ImportVersion=1
+   StaticMaterials(0)=(MaterialInterface=MaterialInstanceConstant'"/Game/ModSci_Engineer/Materials/UI/MI_Door_Locked.MI_Door_Locked"',MaterialSlotName="KeypadUI",ImportedMaterialSlotName="KeypadUI",UVChannelData=(bInitialized=True,LocalUVDensities[0]=7.258669))
+   LightmapUVDensity=7.258669
+   LightMapResolution=64
+   AssetImportData=FbxStaticMeshImportData'"FbxStaticMeshImportData_0"'
+   ThumbnailInfo=SceneThumbnailInfo'"SceneThumbnailInfo_0"'
+   EditorCameraPosition=(bIsSet=True,CamOrbitPoint=(X=-184.473511,Y=-105.205544,Z=29.055847),CamOrbitZoom=(X=78.372841,Y=214.205719,Z=155.549850),CamOrbitRotation=(Pitch=-34.292366,Yaw=-110.096382,Roll=-0.000008))
+   ExtendedBounds=(Origin=(X=0.000000,Y=-33.585915,Z=163.506836),BoxExtent=(X=10.727959,Y=3.628006,Z=3.628006),SphereRadius=11.891760)
+End Object
