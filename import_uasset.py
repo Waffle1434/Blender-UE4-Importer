@@ -4,15 +4,14 @@ from struct import *
 
 #filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\M_Base_Trim.uasset"
 #filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\Example_Stationary.umap"
-filepath = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\M_Base_Trim.uasset"
-#filepath = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\Example_Stationary.umap"
+#filepath = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\M_Base_Trim.uasset"
+filepath = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\Example_Stationary.umap"
 
 logging = True
-separate_bulkdata_files = False
 
 class ByteStream:
-    def __init__(self, byte_stream:io.BufferedReader):
-        self.byte_stream = byte_stream
+    def __init__(self, byte_stream:io.BufferedReader): self.byte_stream = byte_stream
+    def __repr__(self) -> str: return f"\"{self.byte_stream.name}\"[{'Closed' if self.byte_stream.closed else self.Position()}]"
     
     def ReadBytes(self, count) -> bytes: return self.byte_stream.read(count)
     def Seek(self, offset, mode=io.SEEK_SET): self.byte_stream.seek(offset, mode)
@@ -74,6 +73,10 @@ class ArrayDesc:
     def __init__(self, f, b32=True):
         if b32: self.count, self.offset = (f.ReadInt32(), f.ReadInt32())
         else: self.count, self.offset = (f.ReadInt64(), f.ReadInt64())
+    def TrySeek(self, f:ByteStream) -> bool:
+        valid = self.offset > 0 and self.count > 0
+        if valid: f.Seek(self.offset)
+        return valid
     def __repr__(self) -> str: return f"{self.offset}[{self.count}]"
 class EngineVersion:
     def __init__(self, major, minor, patch, changelist, branch):
@@ -95,6 +98,7 @@ class Import:
     def __repr__(self) -> str: return f"{self.object_name}({self.class_package}.{self.class_name})"
 class Export:
     def __init__(self, asset:UAsset):
+        self.asset = asset
         f = asset.f
         self.class_index, self.super_index = (f.ReadInt32(), f.ReadInt32())
         if asset.version_ue4 >= 508: self.template_index = f.ReadInt32()
@@ -114,22 +118,25 @@ class Export:
             self.ser_before_create_depends_size = f.ReadInt32()
             self.create_before_create_depends_size = f.ReadInt32()
         
-        self.properties = []
+        self.properties = None
         self.export_class = asset.TryGetImport(self.class_index)
         self.export_class_type = self.export_class.object_name.str if self.export_class else None
     def __repr__(self) -> str: return f"{self.object_name} [{len(self.properties)}]"
-    def ReadProperties(self, asset:UAsset, i:int, i_export_f:int):
+    def ReadProperties(self):
+        if self.properties: return
+        self.properties = []
+
         if self.export_class_type == "Function" or self.export_class_type.endswith("BlueprintGeneratedClass"):
             print(f"Skipping Export \"{self.export_class_type}\"")
             return
         
-        asset.f.Seek(self.serial_desc.offset)
-        asset.ReadProperties(self.properties)
+        self.asset.f.Seek(self.serial_desc.offset)
+        self.asset.ReadProperties(self.properties)
 
         #match export_class_type: case "Enum" | "UserDefinedEnum": export.enum = # TODO: post "normal export" data
-        extras_len = (self.serial_desc.offset + self.serial_desc.count) - asset.f.Position()
+        extras_len = (self.serial_desc.offset + self.serial_desc.count) - self.asset.f.Position()
         if extras_len < 0: raise
-        else: self.extras = asset.f.ReadBytes(extras_len) if extras_len > 0 else None
+        else: self.extras = self.asset.f.ReadBytes(extras_len) if extras_len > 0 else None
 class UProperty:
     def __repr__(self) -> str: return f"{self.name}({self.struct_type if hasattr(self,'struct_type') else self.type}) = {self.value}"
     def TryRead(self, asset:UAsset, header=True):
@@ -344,67 +351,33 @@ class UAsset:
             for i in range(f.ReadInt32()): chunk_id = f.ReadInt32()
         elif version_ue4 >= 278: chunk_id = f.ReadInt32()
         if version_ue4 >= 507: self.preload_depends_desc = ArrayDesc(f)
-    def __init__(self, filepath, class_whitelist=None):
+    def __init__(self, filepath, read_all=True):
         t0 = time.time()
-        with open(filepath, 'rb') as file:
-            self.f = f = ByteStream(file)
-            self.ReadHeader()
-            
-            self.names = []
-            if self.names_desc.offset > 0:
-                f.Seek(self.names_desc.offset)
-                for i in range(self.names_desc.count):
-                    name = f.ReadFString()
-                    self.names.append(name)
-                    if self.version_ue4 >= 504 and name != "": hash = f.ReadUInt32()
-            
-            self.imports:list[Import] = []
-            if self.imports_desc.offset > 0:
-                f.Seek(self.imports_desc.offset)
-                for i in range(self.imports_desc.count): self.imports.append(Import(self))
-            
-            self.exports:list[Export] = []
-            if self.exports_desc.offset > 0 and self.exports_desc.count > 0:
-                f.Seek(self.exports_desc.offset)
-                for i in range(self.exports_desc.count): self.exports.append(Export(self))
+        self.f = ByteStream(open(filepath, 'rb'))
+        self.ReadHeader()
+        
+        self.names = []
+        if self.names_desc.TrySeek(self.f):
+            for i in range(self.names_desc.count):
+                name = self.f.ReadFString()
+                self.names.append(name)
+                if self.version_ue4 >= 504 and name != "": hash = self.f.ReadUInt32()
+        
+        self.imports:list[Import] = []
+        if self.imports_desc.TrySeek(self.f):
+            for i in range(self.imports_desc.count): self.imports.append(Import(self))
+        
+        self.exports:list[Export] = []
+        if self.exports_desc.TrySeek(self.f):
+            for i in range(self.exports_desc.count): self.exports.append(Export(self))
 
-            '''self.dependencies = []
-            if self.depends_offset > 0:
-                f.Seek(self.depends_offset) # TODO: try seek
-                for i in range(self.exports_desc.count):
-                    data = []
-                    for i_data in range(f.ReadInt32()): data.append(f.ReadInt32())
-                    self.dependencies.append(data)'''
-
-            '''soft_pkg_refs = []
-            if self.soft_pkg_refs_desc.offset > 0:
-                f.Seek(self.soft_pkg_refs_desc.offset)
-                for i in range(self.soft_pkg_refs_desc.count): soft_pkg_refs.append(f.ReadFString())'''
-
-            '''if self.asset_registry_data_offset > 0:
-                f.Seek(self.asset_registry_data_offset)
-                next_offset = self.world_tile_info_data_offset
-                if separate_bulkdata_files and next_offset <= 0: next_offset = self.preload_depends_desc.offset
-                if self.section6_offset > 0 and self.exports_desc.count > 0 and next_offset <= 0: next_offset = self.exports[0].serial_desc.offset
-                if next_offset <= 0: next_offset = self.bulk_data_offset
-                asset_registry_data = f.ReadBytes(next_offset - self.asset_registry_data_offset)
-            else: asset_registry_data = None'''
-            
-            '''if self.world_tile_info_data_offset > 0:
-                _3d = True # TODO: asset.GetCustomVersion<FFortniteMainBranchObjectVersion>()
-                position = (f.ReadInt32(), f.ReadInt32(), f.ReadInt32() if _3d else 0)
-                raise Exception("TODO: World Tile Info Data")
-            else: world_tile_info = None'''
-
-            if separate_bulkdata_files: raise Exception("TODO: Preload Dependencies")
-
-            if self.section6_offset > 0 and self.exports_desc.count > 0:
-                i_export_f = self.exports_desc.count - 1
-                for i in range(self.exports_desc.count):
-                    export = self.exports[i]
-                    #if class_whitelist and export. # TODO: whitelist?
-                    export.ReadProperties(self, i, i_export_f)
+        if read_all and self.section6_offset > 0 and self.exports_desc.count > 0:
+            for i in range(self.exports_desc.count):
+                self.exports[i].ReadProperties()
+            self.f.byte_stream.close()
         print(f"Imported {self} in {time.time() - t0:.2f}s")
         print("!")
-asset = UAsset(filepath)
+
+#asset = UAsset(filepath)
+asset = UAsset(filepath, False)
 print("Done")
