@@ -1,12 +1,22 @@
+# context.area: VIEW_3D
 from __future__ import annotations
-import bpy, io, uuid, time
+import bpy, io, uuid, time, math, os, sys
 from struct import *
 from mathutils import *
+#from . import import_t3d
+
+#dir = os.path.dirname(__file__)
+#if dir not in sys.path: sys.path.append(dir)
+
+#import import_t3d
 
 #filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\Samples\M_Base_Trim.uasset"
-filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\Samples\Example_Stationary.umap"
+#filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\Samples\Example_Stationary.umap"
+filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\Samples\Example_Stationary_Test.umap"
 #filepath = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\M_Base_Trim.uasset"
 #filepath = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\Example_Stationary.umap"
+exported_base_dir = r"F:\Art\Assets"
+exported_base_dir = exported_base_dir.rstrip('\\')
 
 logging = True
 
@@ -89,17 +99,18 @@ class EngineVersion:
         self.changelist = changelist
         self.branch = branch
     def Read(f): return EngineVersion(f.ReadUInt16(), f.ReadUInt16(), f.ReadUInt16(), f.ReadUInt32(), f.ReadFString())
-class Import:
-    def __init__(self, asset:UAsset):
+class Import: #FObjectImport
+    def __init__(self, asset:UAsset, editor=True): # ObjectResource.cpp
         self.class_package = asset.f.ReadFName(asset.names).str
         self.class_name = asset.f.ReadFName(asset.names).str
         self.outer_index = asset.f.ReadInt32() # TODO: don't store
         self.object_name = asset.f.ReadFName(asset.names)
+        if editor and asset.version_ue4 >= 520: self.package_name = asset.f.ReadFName(asset.names)
         self.asset = asset
     @property
     def import_ref(self): return self.asset.TryGetImport(self.outer_index)
     def __repr__(self) -> str: return f"{self.object_name}({self.class_package}.{self.class_name})"
-class Export:
+class Export: #FObjectExport
     def __init__(self, asset:UAsset):
         self.asset = asset
         f = asset.f
@@ -147,9 +158,9 @@ class Properties(dict):
             prop = UProperty()
             if prop.TryRead(asset, header): self[prop.name] = prop
             else: break
-    def TryGetValue(self, key:str):
+    def TryGetValue(self, key:str, default=None):
         property = self.get(key)
-        return property.value if property else None
+        return property.value if property else default
 class UProperty:
     def __repr__(self) -> str: return f"{self.name}({self.struct_type if hasattr(self,'struct_type') else self.type}) = {self.value}"
     def TryRead(self, asset:UAsset, header=True):
@@ -193,6 +204,7 @@ class UProperty:
                         f.Seek(p + self.len)
                     case "ExpressionInput": self.value = FExpressionInput(asset, self.len)
                     case "ExpressionOutput": self.value = Properties().Read(asset)
+                    case "StreamingTextureBuildInfo": self.value = [x for x in f.ReadBytes(self.len)]
                     case _:
                         self.value = [x for x in f.ReadBytes(self.len)]
                         if logging: print(f"Uknown Struct Type \"{self.struct_type}\"")
@@ -316,7 +328,7 @@ class UAsset:
         else: return None #raise Exception("Invalid Package Index of 0")
     def TryReadPropertyGuid(self) -> uuid.UUID: return self.f.ReadGuid() if self.version_ue4 >= 503 and self.f.ReadBool() else None
     #def TryReadProperty(self): # TODO
-    def ReadHeader(self):
+    def ReadHeader(self, editor=True): # UE4 PackageFileSummary.cpp
         f = self.f
         sig = f.ReadUInt32()
         if sig != 0x9E2A83C1: raise Exception(f"Unknown signature: {sig:X}")
@@ -330,10 +342,11 @@ class UAsset:
                 self.custom_version_guid = f.ReadGuid()
                 self.custom_version = f.ReadInt32()
         
-        self.section6_offset = f.ReadInt32()
+        self.header_size = f.ReadInt32()
         self.folder_name = f.ReadFString()
         self.package_flags = f.ReadUInt32()
         self.names_desc = ArrayDesc(f)
+        if version_ue4 >= 516: localization_id = f.ReadFString()
         if version_ue4 >= 459: gatherable_text_desc = ArrayDesc(f)
         self.exports_desc = ArrayDesc(f)
         self.imports_desc = ArrayDesc(f)
@@ -342,7 +355,13 @@ class UAsset:
         if version_ue4 >= 510: self.searchable_names_desc_offset = f.ReadInt32()
         thumbnail_table_offset = f.ReadInt32()
         self.package_guid = f.ReadGuid()
-        for i in range(f.ReadInt32()): gen_export_count, get_name_count = (f.ReadInt32(), f.ReadInt32())
+        if editor:
+            if version_ue4 >= 518:
+                persistent_guid = f.ReadGuid()
+                if version_ue4 < 520: owner_persistent_guid = f.ReadGuid()
+        generation_count = f.ReadInt32()
+        if generation_count < 0: raise
+        for i in range(generation_count): gen_export_count, get_name_count = (f.ReadInt32(), f.ReadInt32())
         engine_version = EngineVersion.Read(f) if version_ue4 >= 336 else EngineVersion(4,0,0,f.ReadUInt32(),"")
         self.compatible_version = EngineVersion.Read(f) if version_ue4 >= 444 else engine_version
         self.compression_flags = f.ReadUInt32()
@@ -360,7 +379,7 @@ class UAsset:
             for i in range(f.ReadInt32()): chunk_id = f.ReadInt32()
         elif version_ue4 >= 278: chunk_id = f.ReadInt32()
         if version_ue4 >= 507: self.preload_depends_desc = ArrayDesc(f)
-    def Read(self, read_all=True):
+    def Read(self, read_all=True): # PackageReader.cpp
         t0 = time.time()
         self.f = ByteStream(open(self.filepath, 'rb'))
         self.ReadHeader()
@@ -380,7 +399,7 @@ class UAsset:
         if self.exports_desc.TrySeek(self.f):
             for i in range(self.exports_desc.count): self.exports.append(Export(self))
 
-        if read_all and self.section6_offset > 0 and self.exports_desc.count > 0:
+        if read_all and self.header_size > 0 and self.exports_desc.count > 0:
             for i in range(self.exports_desc.count):
                 self.exports[i].ReadProperties()
             self.f.byte_stream.close()
@@ -390,33 +409,101 @@ class UAsset:
         return self
     def __exit__(self, *args): self.f.byte_stream.close()
 
-def TryGetPropertyValue(properties:dict[str,UProperty], key:str):
-    property = properties.get(key)
-    return property.value if property else None
+deg2rad = math.radians(1)
 
-with UAsset(filepath) as asset:
-    #asset.exports[600].ReadProperties()
-    for export in asset.exports:
-        match export.export_class_type:
-            case "PointLight":
-                export.ReadProperties()
+def SetupObject(context, name, data=None):
+    obj = bpy.data.objects.new(name, data)
+    obj.rotation_mode = 'YXZ'
+    context.collection.objects.link(obj)
+    return obj
+def TryApplyRootComponent(export:Export, obj, pitch_offset=0):
+    root_exp = export.properties.TryGetValue('RootComponent')
+    if root_exp:
+        root_props = root_exp.properties
+        # Unreal: X+ Forward, Y+ Right, Z+ Up     Blender: X+ Right, Y+ Forward, Z+ Up
+        rel_loc = root_props.TryGetValue('RelativeLocation')
+        if rel_loc: obj.location = Vector((rel_loc[1],rel_loc[0],rel_loc[2])) * 0.01
+        
+        rel_rot = root_props.TryGetValue('RelativeRotation')
+        # Unreal: Roll, Pitch, Yaw     File: Pitch, Yaw, Roll     Blender: Pitch, Roll, -Yaw  0,0,0 = fwd, down for lights
+        if rel_rot:
+            obj.rotation_euler = Euler(((rel_rot[0]+pitch_offset)*deg2rad, rel_rot[2]*deg2rad, -rel_rot[1]*deg2rad))
 
-                light = bpy.data.lights.new(export.object_name.str, 'POINT')
-                light_obj = bpy.data.objects.new(light.name, light)
-                bpy.context.collection.objects.link(light_obj)
+        rel_scale = root_props.TryGetValue('RelativeScale3D')
+        if rel_scale: obj.scale = Vector((rel_scale[1],rel_scale[0],rel_scale[2]))
+        return True
+    return False
 
-                root_exp = export.properties.TryGetValue('RootComponent')
-                if root_exp:
-                    rel_loc = root_exp.properties.TryGetValue('RelativeLocation')
-                    if rel_loc: light_obj.location = Vector(rel_loc) * 0.01
-                
-                light_comp = export.properties.TryGetValue('LightComponent')
-                if light_comp:
-                    light_props = light_comp.properties
-                    intensity = light_props.TryGetValue('Intensity')
-                    if intensity: light.energy = intensity
-                    color = light_props.TryGetValue('LightColor')
-                    if color: light.color = Color(color[:3]) / 255.0
-                    cast = light_props.TryGetValue('CastShadows')
-                    if cast: light.cycles.cast_shadow = light.use_shadow = cast
-print("Done")
+def ImportUnrealFbx(context, filepath, collider_mode='NONE'):
+    objs_1 = set(context.collection.objects)
+    bpy.ops.import_scene.fbx(filepath=filepath, use_image_search=False)
+    imported_objs = []
+    for object in set(context.collection.objects) - objs_1:
+        if object.name.startswith("UCX_"): # Collision
+            if collider_mode == 'NONE':
+                bpy.data.objects.remove(object)
+                continue
+            object.display_type = 'WIRE'
+            object.hide_render = True
+            object.visible_camera = object.visible_diffuse = object.visible_glossy = object.visible_transmission = object.visible_volume_scatter = object.visible_shadow = False
+            object.select_set(False)
+            object.hide_set(collider_mode == 'HIDE')
+        else: imported_objs.append(object)
+    return imported_objs
+
+def LoadUAssetScene(filepath):
+    with UAsset(filepath) as asset:
+        for export in asset.exports:
+            match export.export_class_type:
+                case 'PointLight' | 'SpotLight':
+                    export.ReadProperties()
+
+                    match export.export_class_type:
+                        case 'PointLight': light_type = 'POINT'
+                        case 'SpotLight': light_type = 'SPOT'
+                        case _: raise # TODO: Sun Light
+
+                    light = bpy.data.lights.new(export.object_name.str, light_type)
+                    light_obj = SetupObject(bpy.context, light.name, light)
+                    
+                    TryApplyRootComponent(export, light_obj, -90) # Blender lights are cursed, local Z- Forward, Y+ Up, X+ Right
+                    
+                    light_comp = export.properties.TryGetValue('LightComponent')
+                    if light_comp:
+                        light_props = light_comp.properties
+                        light.energy = light_props.TryGetValue('Intensity')
+                        color = light_props.TryGetValue('LightColor')
+                        if color: light.color = Color(color[:3]) / 255.0
+                        cast = light_props.TryGetValue('CastShadows')
+                        if cast != None: light.cycles.cast_shadow = light.use_shadow = cast
+                        light.shadow_soft_size = light_props.TryGetValue('SourceRadius', 0.05)
+
+                        if light_type == 'SPOT':
+                            outer_angle = light_props.TryGetValue('OuterConeAngle')
+                            inner_angle = light_props.TryGetValue('InnerConeAngle', 0)
+                            light.spot_size = outer_angle * deg2rad
+                            light.spot_blend = 1 - (inner_angle / outer_angle)
+                case 'StaticMeshActor':
+                    export.ReadProperties()
+
+                    mesh = None
+                    static_mesh_comp = export.properties.TryGetValue('StaticMeshComponent')
+                    if static_mesh_comp:
+                        static_mesh = static_mesh_comp.properties.TryGetValue('StaticMesh')
+                        if static_mesh:
+                            mesh_name = static_mesh.object_name.str
+                            mesh = bpy.data.meshes.get(mesh_name)
+                            if not mesh:
+                                mesh_import = static_mesh.import_ref
+                                if mesh_import:
+                                    mesh_path = os.path.normpath(f"{exported_base_dir}{mesh_import.object_name.str}.FBX")
+                                    mesh = ImportUnrealFbx(bpy.context, mesh_path)[0].data
+                                    mesh.name = mesh_name
+                                    mesh.transform(Euler((0,0,90*deg2rad)).to_matrix().to_4x4()*0.01)
+                    
+                    obj = SetupObject(bpy.context, export.object_name.str, mesh)
+
+                    TryApplyRootComponent(export, obj)
+                    #break
+
+LoadUAssetScene(filepath)
