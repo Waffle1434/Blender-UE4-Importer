@@ -7,18 +7,18 @@ from mathutils import *
 
 #dir = os.path.dirname(__file__)
 #if dir not in sys.path: sys.path.append(dir)
-
 #import import_t3d
 
 #filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\Samples\M_Base_Trim.uasset"
-#filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\Samples\Example_Stationary.umap"
+filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\Samples\Example_Stationary.umap"
 #filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\Samples\Example_Stationary_Test.umap"
 #filepath = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\M_Base_Trim.uasset"
-filepath = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\Example_Stationary.umap"
+#filepath = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\Example_Stationary.umap"
 exported_base_dir = r"F:\Art\Assets"
 project_dir = r"F:\Projects\Unreal Projects\Assets"
 
 logging = True
+hide_noncasting = False
 
 exported_base_dir = os.path.normpath(exported_base_dir)
 project_dir = os.path.normpath(project_dir)
@@ -417,16 +417,17 @@ class UAsset:
                 self.exports[i].ReadProperties()
             self.f.byte_stream.close()
             print(f"Imported {self} in {time.time() - t0:.2f}s")
+    def Close(self): self.f.byte_stream.close()
     def __enter__(self):
         self.Read(False)
         return self
-    def __exit__(self, *args): self.f.byte_stream.close()
+    def __exit__(self, *args): self.Close()
 
-def ImportUnrealFbx(context, filepath, collider_mode='NONE'):
-    objs_1 = set(context.collection.objects)
+def ImportUnrealFbx(filepath, collider_mode='NONE'):
+    objs_1 = set(bpy.context.collection.objects)
     bpy.ops.import_scene.fbx(filepath=filepath, use_image_search=False)
     imported_objs = []
-    for object in set(context.collection.objects) - objs_1:
+    for object in set(bpy.context.collection.objects) - objs_1:
         if object.name.startswith("UCX_"): # Collision
             if collider_mode == 'NONE':
                 bpy.data.objects.remove(object)
@@ -474,7 +475,7 @@ def TryGetStaticMesh(static_mesh_comp:Export):
             if mesh_import:
                 mesh_path = os.path.normpath(f"{exported_base_dir}{mesh_import.object_name.str}.FBX")
                 #return mesh
-                mesh = ImportUnrealFbx(bpy.context, mesh_path)[0].data
+                mesh = ImportUnrealFbx(mesh_path)[0].data
                 mesh.name = mesh_name
                 mesh.transform(Euler((0,0,90*deg2rad)).to_matrix().to_4x4()*0.01)
     return mesh
@@ -499,7 +500,9 @@ def ProcessExport(export:Export):
                 color = light_props.TryGetValue('LightColor')
                 if color: light.color = Color(color[:3]) / 255.0
                 cast = light_props.TryGetValue('CastShadows')
-                if cast != None: light.cycles.cast_shadow = light.use_shadow = cast
+                if cast != None:
+                    light.use_shadow = cast
+                    if not cast and hide_noncasting: light_obj.hide_viewport = light_obj.hide_render = True
                 light.shadow_soft_size = light_props.TryGetValue('SourceRadius', 0.05)
 
                 if light_type == 'SPOT':
@@ -521,36 +524,46 @@ def ProcessExport(export:Export):
 
                 bp_obj = SetupObject(bpy.context, export.object_name.str)
                 TryApplyRootComponent(export, bp_obj)
-
-                bp_path = pathlib.Path(export.export_class.import_ref.object_name.str)
-                bp_filepath = os.path.join(project_dir, "Content", str(bp_path.relative_to("\\Game"))) + ".uasset"
+                root_comp = export.properties.TryGetValue('RootComponent')
+                root_comp.bl_obj = bp_obj
 
                 bp_comps = export.properties.TryGetValue('BlueprintCreatedComponents')
                 if bp_comps:
-                    with UAsset(bp_filepath) as bp_asset:
-                        name2exp = {}
-                        for bp_export in bp_asset.exports: name2exp[bp_export.object_name.str] = bp_export
+                    if not hasattr(export.asset, 'import_cache'): export.asset.import_cache = {}
 
-                        for comp in bp_comps:
-                            child_export = comp.value
-                            #ProcessExport(child_export)
-                            if child_export.export_class_type == 'StaticMeshComponent':
-                                gend_exp = name2exp.get(f"{child_export.object_name.str}_GEN_VARIABLE")
-                                if gend_exp:
-                                    gend_exp.ReadProperties()
+                    bp_path = export.export_class.import_ref.object_name.str
+                    bp_asset = export.asset.import_cache.get(bp_path)
+                    if not bp_asset:
+                        bp_filepath = os.path.join(project_dir, "Content", str(pathlib.Path(bp_path).relative_to("\\Game"))) + ".uasset"
+                        export.asset.import_cache[bp_path] = bp_asset = UAsset(bp_filepath)
+                        bp_asset.Read(False)
+                        bp_asset.name2exp = {}
+                        for exp in bp_asset.exports: bp_asset.name2exp[exp.object_name.str] = exp
+                    
+                    for comp in bp_comps:
+                        child_export = comp.value
+                        #ProcessExport(child_export) # TODO? Can't, need to partly process gend_exp & child_export
+                        if child_export.export_class_type == 'StaticMeshComponent':
+                            gend_exp = bp_asset.name2exp.get(f"{child_export.object_name.str}_GEN_VARIABLE")
+                            if gend_exp:
+                                gend_exp.ReadProperties()
 
-                                    mesh = TryGetStaticMesh(gend_exp)
-                                    obj = SetupObject(bpy.context, child_export.object_name.str, mesh)
-                                    
-                                    attach = child_export.properties.TryGetValue('AttachParent')
-                                    if attach and attach == export.properties.TryGetValue('RootComponent'): obj.parent = bp_obj
+                                mesh = TryGetStaticMesh(gend_exp)
+                                child_export.bl_obj = obj = SetupObject(bpy.context, child_export.object_name.str, mesh)
 
-                                    Transform(gend_exp, obj)
+                                attach = child_export.properties.TryGetValue('AttachParent') # TODO: unify?
+                                if attach:
+                                    if hasattr(attach, 'bl_obj'): obj.parent = attach.bl_obj
+                                    else: raise
+
+                                Transform(gend_exp, obj)
                 return
 def LoadUAssetScene(filepath):
     with UAsset(filepath) as asset:
         for export in asset.exports:
             ProcessExport(export)
+        if hasattr(asset, 'import_cache'):
+            for imp_asset in asset.import_cache.values(): imp_asset.Close()
 
 #asset = UAsset(r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\Door_A_BP.uasset")
 #asset.Read()

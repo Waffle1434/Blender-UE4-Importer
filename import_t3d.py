@@ -7,7 +7,7 @@ from bpy.types import Operator
 #filename = "M_Base_Trim.T3D"
 filename = "MI_Trim_A_Red2.T3D"
 #base_dir = "F:\Art\Assets"
-filename = bpy.path.abspath("//" + filename)
+filename = bpy.path.abspath(f"//Samples//{filename}")
 logging = False
 mute_ior = True
 mute_fresnel = True
@@ -195,10 +195,7 @@ def ImportT3D(filename, mat=None, mat_object=None, base_dir=""):
             mat_name = header.group(4)
             object_body = header.group(5)
 
-            #print(f"post-body-parse {(time.time() - t0)*1000:.2f}ms")
-
             if mat_name in bpy.data.materials:# TODO: redundant?
-                #bpy.data.materials.remove(bpy.data.materials[mat_name])
                 mat = bpy.data.materials[mat_name]
                 nodes = mat.node_tree.nodes
                 for node in nodes:
@@ -411,8 +408,10 @@ def ImportObjectsMaterials(objects, base_dir="", force=False):
 def GetMeshObjects(objects): return filter(lambda o: o.type == 'MESH', objects)
 def ImportSelectedObjectMaterials(base_dir="", force=True): ImportObjectsMaterials(GetMeshObjects(bpy.context.selected_objects), base_dir, force)
 def ImportUnrealFbx(filepath, collider_mode='NONE'):
-    bpy.ops.import_scene.fbx(filepath=filepath)
-    for object in bpy.context.selected_objects:
+    objs_1 = set(bpy.context.collection.objects)
+    bpy.ops.import_scene.fbx(filepath=filepath, use_image_search=False)
+    imported_objs = []
+    for object in set(bpy.context.collection.objects) - objs_1:
         if object.name.startswith("UCX_"): # Collision
             if collider_mode == 'NONE':
                 bpy.data.objects.remove(object)
@@ -422,6 +421,8 @@ def ImportUnrealFbx(filepath, collider_mode='NONE'):
             object.visible_camera = object.visible_diffuse = object.visible_glossy = object.visible_transmission = object.visible_volume_scatter = object.visible_shadow = False
             object.select_set(False)
             object.hide_set(collider_mode == 'HIDE')
+        else: imported_objs.append(object)
+    return imported_objs
 def ImportUnrealFbxAndMaterials(filepath, base_dir, collider_mode='NONE'):
         ImportUnrealFbx(filepath, collider_mode)
         mesh_objects = list(GetMeshObjects(bpy.context.selected_objects))
