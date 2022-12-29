@@ -1,6 +1,6 @@
 # context.area: VIEW_3D
 from __future__ import annotations
-import bpy, io, uuid, time, math, os, sys, pathlib
+import bpy, io, uuid, time, math, os, sys, pathlib, subprocess
 from struct import *
 from mathutils import *
 #from . import import_t3d
@@ -10,12 +10,13 @@ from mathutils import *
 #import import_t3d
 
 #filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\Samples\M_Base_Trim.uasset"
-filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\Samples\Example_Stationary.umap"
+#filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\Samples\Example_Stationary.umap"
 #filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\Samples\Example_Stationary_Test.umap"
 #filepath = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\M_Base_Trim.uasset"
-#filepath = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\Example_Stationary.umap"
+filepath = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\Example_Stationary.umap"
 exported_base_dir = r"F:\Art\Assets"
 project_dir = r"F:\Projects\Unreal Projects\Assets"
+umodel_path = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\umodel.exe"
 
 logging = True
 hide_noncasting = False
@@ -440,6 +441,7 @@ def ImportUnrealFbx(filepath, collider_mode='NONE'):
         else: imported_objs.append(object)
     return imported_objs
 
+def ArchiveToProjectPath(path): return os.path.join(project_dir, "Content", str(pathlib.Path(path).relative_to("\\Game"))) + ".uasset"
 def SetupObject(context, name, data=None):
     obj = bpy.data.objects.new(name, data)
     obj.rotation_mode = 'YXZ'
@@ -464,6 +466,24 @@ def TryApplyRootComponent(export:Export, obj, pitch_offset=0):
         Transform(root_exp, obj, pitch_offset)
         return True
     return False
+def TryGetExtractedImport(imp:Import, extract_dir):
+    archive_path = imp.object_name.str
+    extracted_imports = {}
+    extracted = extracted_imports.get(archive_path)
+    if not extracted:
+        asset_path = ArchiveToProjectPath(archive_path)
+        extracted_path = extract_dir+archive_path
+        match type:
+            case 'StaticMesh':
+                subprocess.run(f"\"{umodel_path}\" -export -gltf -out=\"{extract_dir}\" \"{asset_path}\"")
+                #bpy.ops.import_scene.gltf(filepath=extracted_path, merge_vertices=True, import_pack_images=False)
+            case 'Texture':
+                subprocess.run(f"\"{umodel_path}\" -export -png -out=\"{extract_dir}\" \"{asset_path}\"")
+                #bpy.data.images.load(extracted_path, check_existing=True)
+            case _: raise
+        raise
+        extracted_imports[archive_path] = extracted
+    return extracted
 def TryGetStaticMesh(static_mesh_comp:Export):
     mesh = None
     static_mesh = static_mesh_comp.properties.TryGetValue('StaticMesh')
@@ -474,7 +494,7 @@ def TryGetStaticMesh(static_mesh_comp:Export):
             mesh_import = static_mesh.import_ref
             if mesh_import:
                 mesh_path = os.path.normpath(f"{exported_base_dir}{mesh_import.object_name.str}.FBX")
-                #return mesh
+                return mesh
                 mesh = ImportUnrealFbx(mesh_path)[0].data
                 mesh.name = mesh_name
                 mesh.transform(Euler((0,0,90*deg2rad)).to_matrix().to_4x4()*0.01)
@@ -534,8 +554,7 @@ def ProcessExport(export:Export):
                     bp_path = export.export_class.import_ref.object_name.str
                     bp_asset = export.asset.import_cache.get(bp_path)
                     if not bp_asset:
-                        bp_filepath = os.path.join(project_dir, "Content", str(pathlib.Path(bp_path).relative_to("\\Game"))) + ".uasset"
-                        export.asset.import_cache[bp_path] = bp_asset = UAsset(bp_filepath)
+                        export.asset.import_cache[bp_path] = bp_asset = UAsset(ArchiveToProjectPath(bp_path))
                         bp_asset.Read(False)
                         bp_asset.name2exp = {}
                         for exp in bp_asset.exports: bp_asset.name2exp[exp.object_name.str] = exp
@@ -567,5 +586,10 @@ def LoadUAssetScene(filepath):
 
 #asset = UAsset(r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\Door_A_BP.uasset")
 #asset.Read()
-LoadUAssetScene(filepath)
+#LoadUAssetScene(filepath)
+
+asset_path = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\T_Lights_Diff.uasset"
+#subprocess.run((umodel_path, "-export", "-png", asset_path))
+subprocess.run(f"\"{umodel_path}\" -export -png \"{asset_path}\"")
+
 print("Done")
