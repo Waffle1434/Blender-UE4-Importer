@@ -1,28 +1,17 @@
 from __future__ import annotations
-import bpy, io, uuid, time, math, os, sys, pathlib, subprocess
+import bpy, io, uuid, time, os, pathlib
 from struct import *
 from mathutils import *
-#from . import import_t3d
-
-#dir = os.path.dirname(__file__)
-#if dir not in sys.path: sys.path.append(dir)
-#import import_t3d
 
 #filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\Samples\M_Base_Trim.uasset"
-#filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\Samples\Example_Stationary.umap"
-#filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\Samples\Example_Stationary_Test.umap"
-#filepath = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\M_Base_Trim.uasset"
-filepath = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\Example_Stationary.umap"
+filepath = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\M_Base_Trim.uasset"
 exported_base_dir = r"F:\Art\Assets"
 project_dir = r"F:\Projects\Unreal Projects\Assets"
-umodel_path = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\umodel.exe"
 
 logging = True
-hide_noncasting = False
 
 exported_base_dir = os.path.normpath(exported_base_dir)
 project_dir = os.path.normpath(project_dir)
-deg2rad = math.radians(1)
 
 class ByteStream:
     def __init__(self, byte_stream:io.BufferedReader): self.byte_stream = byte_stream
@@ -118,26 +107,26 @@ class Export: #FObjectExport
     def __init__(self, asset:UAsset):
         self.asset = asset
         f = asset.f
-        self.class_index, self.super_index = (f.ReadInt32(), f.ReadInt32())
-        if asset.version_ue4 >= 508: self.template_index = f.ReadInt32()
+        class_index, super_index = (f.ReadInt32(), f.ReadInt32())
+        if asset.version_ue4 >= 508: template_index = f.ReadInt32()
         self.outer_index = f.ReadInt32()
         self.object_name = f.ReadFName(asset.names)
         self.object_flags = f.ReadUInt32()
         self.serial_desc = ArrayDesc(f, asset.version_ue4 < 511)
-        self.force_export, self.not_for_client, self.not_for_server = (f.ReadIntBool(), f.ReadIntBool(), f.ReadIntBool())
+        force_export, not_for_client, not_for_server = (f.ReadIntBool(), f.ReadIntBool(), f.ReadIntBool())
         self.package_guid = f.ReadGuid()
-        self.package_flags = f.ReadUInt32()
-        if asset.version_ue4 >= 365: self.not_always_loaded_for_editor = f.ReadIntBool()
+        package_flags = f.ReadUInt32()
+        if asset.version_ue4 >= 365: not_always_loaded_for_editor = f.ReadIntBool()
         if asset.version_ue4 >= 465: self.is_asset = f.ReadIntBool()
         if asset.version_ue4 >= 507:
-            self.export_depends_offset = f.ReadInt32()
-            self.ser_before_ser_depends_size = f.ReadInt32()
-            self.create_before_ser_depends_size = f.ReadInt32()
-            self.ser_before_create_depends_size = f.ReadInt32()
-            self.create_before_create_depends_size = f.ReadInt32()
+            export_depends_offset = f.ReadInt32()
+            ser_before_ser_depends_size = f.ReadInt32()
+            create_before_ser_depends_size = f.ReadInt32()
+            ser_before_create_depends_size = f.ReadInt32()
+            create_before_create_depends_size = f.ReadInt32()
         
         self.properties = None
-        self.export_class = asset.DecodePackageIndex(self.class_index)
+        self.export_class = asset.DecodePackageIndex(class_index)
         self.export_class_type = self.export_class.object_name.str if self.export_class else None
     def __repr__(self) -> str: return f"{self.object_name} [{len(self.properties) if self.properties != None else 'Unread'}]"
     def ReadProperties(self, read_children=True):
@@ -340,7 +329,6 @@ class UAsset:
         elif i > 0: return self.GetExport(i)
         else: return None #raise Exception("Invalid Package Index of 0")
     def TryReadPropertyGuid(self) -> uuid.UUID: return self.f.ReadGuid() if self.version_ue4 >= 503 and self.f.ReadBool() else None
-    #def TryReadProperty(self): # TODO
     def ReadHeader(self, editor=True): # UE4 PackageFileSummary.cpp
         f = self.f
         sig = f.ReadUInt32()
@@ -351,13 +339,14 @@ class UAsset:
         self.version_ue4 = version_ue4 = f.ReadInt32()
         self.version_ue4_licensee = f.ReadInt32()
         if self.version_legacy < -2:
-            for i in range(f.ReadInt32()):
-                self.custom_version_guid = f.ReadGuid()
-                self.custom_version = f.ReadInt32()
+            self.custom_versions = []
+            for i in range(f.ReadInt32()): # TODO
+                custom_version_guid, custom_version = (f.ReadGuid(), f.ReadInt32())
+                self.custom_versions.append((custom_version_guid, custom_version))
         
         self.header_size = f.ReadInt32()
         self.folder_name = f.ReadFString()
-        self.package_flags = f.ReadUInt32()
+        package_flags = f.ReadUInt32()
         self.names_desc = ArrayDesc(f)
         if version_ue4 >= 516: localization_id = f.ReadFString()
         if version_ue4 >= 459: gatherable_text_desc = ArrayDesc(f)
@@ -376,23 +365,28 @@ class UAsset:
         if generation_count < 0: raise
         for i in range(generation_count): gen_export_count, get_name_count = (f.ReadInt32(), f.ReadInt32())
         engine_version = EngineVersion.Read(f) if version_ue4 >= 336 else EngineVersion(4,0,0,f.ReadUInt32(),"")
-        self.compatible_version = EngineVersion.Read(f) if version_ue4 >= 444 else engine_version
-        self.compression_flags = f.ReadUInt32()
+        compatible_version = EngineVersion.Read(f) if version_ue4 >= 444 else engine_version
+        compression_flags = f.ReadUInt32()
         compressed_chunks_count = f.ReadInt32()
         if compressed_chunks_count > 0: raise Exception("Asset has package-level compression and is likely too old to be parsed")
-        self.package_source = f.ReadUInt32()
+        package_source = f.ReadUInt32()
         for i in range(f.ReadInt32()): self.package = f.ReadFString()
         if self.version_legacy > -7:
             texture_alloc_count = f.ReadInt32()
             if texture_alloc_count > 0: raise Exception("Asset has texture allocation info and is likely too old to be parsed")
-        self.asset_registry_data_offset = f.ReadInt32()
-        self.bulk_data_offset = f.ReadInt64()
-        self.world_tile_info_data_offset = f.ReadInt32() if version_ue4 >= 224 else 0
+        asset_registry_data_offset = f.ReadInt32()
+        bulk_data_offset = f.ReadInt64()
+        world_tile_info_data_offset = f.ReadInt32() if version_ue4 >= 224 else 0
         if version_ue4 >= 326:
             for i in range(f.ReadInt32()): chunk_id = f.ReadInt32()
         elif version_ue4 >= 278: chunk_id = f.ReadInt32()
         if version_ue4 >= 507: self.preload_depends_desc = ArrayDesc(f)
-    def Read(self, read_all=True): # PackageReader.cpp
+    def ReadProperties(self):
+        if self.header_size > 0 and self.exports_desc.count > 0:
+            for i in range(self.exports_desc.count):
+                self.exports[i].ReadProperties()
+            self.f.byte_stream.close()
+    def Read(self, read_properties=True): # PackageReader.cpp
         t0 = time.time()
         self.f = ByteStream(open(self.filepath, 'rb'))
         self.ReadHeader()
@@ -412,10 +406,8 @@ class UAsset:
         if self.exports_desc.TrySeek(self.f):
             for i in range(self.exports_desc.count): self.exports.append(Export(self))
 
-        if read_all and self.header_size > 0 and self.exports_desc.count > 0:
-            for i in range(self.exports_desc.count):
-                self.exports[i].ReadProperties()
-            self.f.byte_stream.close()
+        if read_properties:
+            self.ReadProperties()
             print(f"Imported {self} in {time.time() - t0:.2f}s")
     def Close(self): self.f.byte_stream.close()
     def __enter__(self):
@@ -423,172 +415,116 @@ class UAsset:
         return self
     def __exit__(self, *args): self.Close()
 
-def ImportUnrealFbx(filepath, collider_mode='NONE'):
-    objs_1 = set(bpy.context.collection.objects)
-    bpy.ops.import_scene.fbx(filepath=filepath, use_image_search=False)
-    imported_objs = []
-    for object in set(bpy.context.collection.objects) - objs_1:
-        if object.name.startswith("UCX_"): # Collision
-            if collider_mode == 'NONE':
-                bpy.data.objects.remove(object)
-                continue
-            object.display_type = 'WIRE'
-            object.hide_render = True
-            object.visible_camera = object.visible_diffuse = object.visible_glossy = object.visible_transmission = object.visible_volume_scatter = object.visible_shadow = False
-            object.select_set(False)
-            object.hide_set(collider_mode == 'HIDE')
-        else: imported_objs.append(object)
-    return imported_objs
-
 def ArchiveToProjectPath(path): return os.path.join(project_dir, "Content", str(pathlib.Path(path).relative_to("\\Game"))) + ".uasset"
-def SetupObject(context, name, data=None):
-    obj = bpy.data.objects.new(name, data)
-    obj.rotation_mode = 'YXZ'
-    context.collection.objects.link(obj)
-    return obj
-def Transform(export:Export, obj, pitch_offset=0):
-    props = export.properties
 
-    # Unreal: X+ Forward, Y+ Right, Z+ Up     Blender: X+ Right, Y+ Forward, Z+ Up
-    rel_loc = props.TryGetValue('RelativeLocation')
-    if rel_loc: obj.location = Vector((rel_loc[1],rel_loc[0],rel_loc[2])) * 0.01
+
+
+class UE2BlenderNodeMapping():
+    def __init__(self, bl_idname, subtype=None, label=None, hide=True, inputs=None, outputs=None, color=None):
+        self.bl_idname = bl_idname
+        self.subtype = subtype
+        self.label = label
+        self.hide = hide
+        self.inputs = inputs
+        self.outputs = outputs
+        self.color = color
+class NodeData():
+    def __init__(self, classname, node=None, params=None, link_indirect=None, input_remap=None):
+        self.classname = classname
+        self.node = node
+        self.params = params
+        self.link_indirect = link_indirect
+        self.input_remap = input_remap
+class GraphData(): # TODO: redundant, only returned node_guids used
+    def __init__(self):
+        self.nodes_data = {}
+        self.node_guids = {}
+
+default_mapping = UE2BlenderNodeMapping('ShaderNodeMath', label="UNKNOWN", color=Color((1,0,0)))
+UE2BlenderNode_dict = {
+    'Material' : UE2BlenderNodeMapping('ShaderNodeBsdfPrincipled', hide=False, inputs={ 'BaseColor':'Base Color','Metallic':'Metallic','Specular':'Specular','Roughness':'Roughness',
+        'EmissiveColor':'Emission','Opacity':'Alpha','OpacityMask':'Alpha','Normal':'Normal','Refraction':'IOR' }),
+    'MaterialExpressionAdd' : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='ADD', inputs={'A':0,'B':1}),
+    'MaterialExpressionMultiply' : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='MULTIPLY', inputs={'A':0,'B':1}),
+    'MaterialExpressionConstant' : UE2BlenderNodeMapping('ShaderNodeValue', hide=False),
+    'MaterialExpressionScalarParameter' : UE2BlenderNodeMapping('ShaderNodeValue', hide=False),
+    'MaterialExpressionConstant3Vector' : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='RGBA', hide=False, outputs={'RGB':0,'R':1,'G':2,'B':3,'A':4}),
+    'MaterialExpressionVectorParameter' : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='RGBA', hide=False, outputs={'RGB':0,'R':1,'G':2,'B':3,'A':4}),
+    'MaterialExpressionStaticSwitchParameter' : UE2BlenderNodeMapping('ShaderNodeMixRGB', label="Switch", hide=False, inputs={'A':2,'B':1}),
+    'MaterialExpressionAppendVector' : UE2BlenderNodeMapping('ShaderNodeCombineXYZ', label="Append", inputs={'A':0,'B':1}),
+    'MaterialExpressionLinearInterpolate' : UE2BlenderNodeMapping('ShaderNodeMixRGB', label="Lerp", inputs={'A':1,'B':2,'Alpha':0}),
+    'MaterialExpressionClamp' : UE2BlenderNodeMapping('ShaderNodeClamp', inputs={'Input':0,'Min':1,'Max':2}),
+    'MaterialExpressionPower' : UE2BlenderNodeMapping('ShaderNodeMath', subtype='POWER', inputs={'Base':0,'Exponent':1}),
+    'MaterialExpressionTextureSampleParameter2D' : UE2BlenderNodeMapping('ShaderNodeTexImage', hide=False, inputs={'Coordinates':0}),
+    'MaterialExpressionTextureCoordinate' : UE2BlenderNodeMapping('ShaderNodeUVMap', hide=False),
+    'MaterialExpressionDesaturation' : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='Desaturation', inputs={'Input':0,'Fraction':1}),
+    'MaterialExpressionComment' : UE2BlenderNodeMapping('NodeFrame'),
+    'MaterialExpressionFresnel' : UE2BlenderNodeMapping('ShaderNodeFresnel', hide=False),
+    'CheapContrast_RGB' : UE2BlenderNodeMapping('ShaderNodeBrightContrast', hide=False, inputs={'FunctionInputs(0)':'Color','FunctionInputs(1)':'Contrast'}),
+    'BlendAngleCorrectedNormals' : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='BlendAngleCorrectedNormals', hide=False, inputs={'FunctionInputs(0)':0,'FunctionInputs(1)':1}),
+}
+class_blacklist = { 'SceneThumbnailInfoWithPrimitive', 'MaterialExpressionPanner' }
+material_classes = { 'Material', 'MaterialInstanceConstant' }
+node_whitelist = { 'ShaderNodeBsdfPrincipled', 'ShaderNodeOutputMaterial' }
+param_x = 'MaterialExpressionEditorX'
+param_y = 'MaterialExpressionEditorY'
+
+def DeDuplicateName(name):
+    i = name.rfind('.')
+    return name[:i] if i >= 0 else name
+def GuessBaseDir(filename): return filename[:filename.find("Game")] # Unreal defaults to starting path with "Game" on asset export
+def SetupNode(node_tree, name, mapping, node_data): # TODO: inline
+    node = node_tree.nodes.new(mapping.bl_idname)
+    node.name = name
+    node.hide = mapping.hide
+    if mapping.subtype:
+        if mapping.bl_idname == 'ShaderNodeGroup': node.node_tree = bpy.data.node_groups[mapping.subtype]
+        else: node.operation = mapping.subtype
+    if mapping.label: node.label = mapping.label
+    node.use_custom_color = mapping.color != None
+    if mapping.color: node.color = mapping.color
+
+    match mapping.bl_idname:
+        case 'ShaderNodeTexImage':
+            rgb_in = node.outputs['Color']
+            if node_data.params.get('SamplerType') == 'SAMPLERTYPE_Normal':
+                rgb2n = node_tree.nodes.new('ShaderNodeGroup')
+                rgb2n.node_tree = bpy.data.node_groups['RGBtoNormal']
+                rgb2n.hide = True
+                SetPos(rgb2n, param_x, param_y, node_data.params)
+                rgb2n.location += Vector((-50,30))
+                node_tree.links.new(node.outputs['Color'], rgb2n.inputs['RGB'])
+                rgb_in = rgb2n.outputs['Normal']
+
+            rgba = node_tree.nodes.new('ShaderNodeGroup')
+            rgba.node_tree = bpy.data.node_groups['RGBA']
+            rgba.hide = True
+            node_tree.links.new(rgb_in, rgba.inputs['RGB'])
+            node_tree.links.new(node.outputs['Alpha'], rgba.inputs['A'])
+            node_data.link_indirect = rgba.outputs
+        case 'ShaderNodeMixRGB':
+            node.inputs['Fac'].default_value = 0
+    return node
+def SetPos(node, param_x, param_y, params): node.location = (int(params.get(param_x,"0")), -int(params.get(param_y,"0")))
+def ImportUMaterial(filepath):
+    t0 = time.time()
+    if logging: print(f"Import \"{filepath}\"")
+
+    with UAsset(filepath) as asset: asset.ReadProperties()# TODO: lazy faster?
+
+    mat = None
+    mat_name = None
+
+    for exp in asset.exports:
+        match exp.export_class_type:
+            case 'Material':
+                mat_name = exp.object_name.FullName()
+                mat = bpy.data.materials.new(mat_name)
+
     
-    # Unreal: Roll, Pitch, Yaw     File: Pitch, Yaw, Roll     Blender: Pitch, Roll, -Yaw     0,0,0 = fwd, down for lights
-    rel_rot = props.TryGetValue('RelativeRotation')
-    if rel_rot: obj.rotation_euler = Euler(((rel_rot[0]+pitch_offset)*deg2rad, rel_rot[2]*deg2rad, -rel_rot[1]*deg2rad))
+    if logging: print(f"Imported {mat_name}: {(time.time() - t0) * 1000:.2f}ms")
+    #return (mat, graph_data)
+    return mat
 
-    rel_scale = props.TryGetValue('RelativeScale3D')
-    if rel_scale: obj.scale = Vector((rel_scale[1],rel_scale[0],rel_scale[2]))
-def TryApplyRootComponent(export:Export, obj, pitch_offset=0):
-    root_exp = export.properties.TryGetValue('RootComponent')
-    if root_exp:
-        Transform(root_exp, obj, pitch_offset)
-        return True
-    return False
-def TryGetExtractedImport(imp:Import, extract_dir):
-    archive_path = imp.object_name.str
-    extracted_imports = {}
-    extracted = extracted_imports.get(archive_path)
-    if not extracted:
-        asset_path = ArchiveToProjectPath(archive_path)
-        extracted_path = extract_dir+archive_path
-        match type:
-            case 'StaticMesh':
-                subprocess.run(f"\"{umodel_path}\" -export -gltf -out=\"{extract_dir}\" \"{asset_path}\"")
-                #bpy.ops.import_scene.gltf(filepath=extracted_path, merge_vertices=True, import_pack_images=False)
-            case 'Texture':
-                subprocess.run(f"\"{umodel_path}\" -export -png -out=\"{extract_dir}\" \"{asset_path}\"")
-                #bpy.data.images.load(extracted_path, check_existing=True)
-            case _: raise
-        raise
-        extracted_imports[archive_path] = extracted
-    return extracted
-def TryGetStaticMesh(static_mesh_comp:Export):
-    mesh = None
-    static_mesh = static_mesh_comp.properties.TryGetValue('StaticMesh')
-    if static_mesh:
-        mesh_name = static_mesh.object_name.str
-        mesh = bpy.data.meshes.get(mesh_name)
-        if not mesh:
-            mesh_import = static_mesh.import_ref
-            if mesh_import:
-                mesh_path = os.path.normpath(f"{exported_base_dir}{mesh_import.object_name.str}.FBX")
-                return mesh
-                mesh = ImportUnrealFbx(mesh_path)[0].data
-                mesh.name = mesh_name
-                mesh.transform(Euler((0,0,90*deg2rad)).to_matrix().to_4x4()*0.01)
-    return mesh
-def ProcessExport(export:Export):
-    match export.export_class_type:
-        case 'PointLight' | 'SpotLight':
-            export.ReadProperties()
-
-            match export.export_class_type:
-                case 'PointLight': light_type = 'POINT'
-                case 'SpotLight': light_type = 'SPOT'
-                case _: raise # TODO: Sun Light
-
-            light = bpy.data.lights.new(export.object_name.str, light_type)
-            light_obj = SetupObject(bpy.context, light.name, light)
-            TryApplyRootComponent(export, light_obj, -90) # Blender lights are cursed, local Z- Forward, Y+ Up, X+ Right
-            
-            light_comp = export.properties.TryGetValue('LightComponent')
-            if light_comp:
-                light_props = light_comp.properties
-                light.energy = light_props.TryGetValue('Intensity')
-                color = light_props.TryGetValue('LightColor')
-                if color: light.color = Color(color[:3]) / 255.0
-                cast = light_props.TryGetValue('CastShadows')
-                if cast != None:
-                    light.use_shadow = cast
-                    if not cast and hide_noncasting: light_obj.hide_viewport = light_obj.hide_render = True
-                light.shadow_soft_size = light_props.TryGetValue('SourceRadius', 0.05)
-
-                if light_type == 'SPOT':
-                    outer_angle = light_props.TryGetValue('OuterConeAngle')
-                    inner_angle = light_props.TryGetValue('InnerConeAngle', 0)
-                    light.spot_size = outer_angle * deg2rad
-                    light.spot_blend = 1 - (inner_angle / outer_angle)
-        case 'StaticMeshActor':
-            export.ReadProperties()
-
-            static_mesh_comp = export.properties.TryGetValue('StaticMeshComponent')
-            if static_mesh_comp: mesh = TryGetStaticMesh(static_mesh_comp)
-            
-            obj = SetupObject(bpy.context, export.object_name.str, mesh)
-            TryApplyRootComponent(export, obj)
-        case _:
-            if export.export_class.class_name == 'BlueprintGeneratedClass':
-                export.ReadProperties()
-
-                bp_obj = SetupObject(bpy.context, export.object_name.str)
-                TryApplyRootComponent(export, bp_obj)
-                root_comp = export.properties.TryGetValue('RootComponent')
-                root_comp.bl_obj = bp_obj
-
-                bp_comps = export.properties.TryGetValue('BlueprintCreatedComponents')
-                if bp_comps:
-                    if not hasattr(export.asset, 'import_cache'): export.asset.import_cache = {}
-
-                    bp_path = export.export_class.import_ref.object_name.str
-                    bp_asset = export.asset.import_cache.get(bp_path)
-                    if not bp_asset:
-                        export.asset.import_cache[bp_path] = bp_asset = UAsset(ArchiveToProjectPath(bp_path))
-                        bp_asset.Read(False)
-                        bp_asset.name2exp = {}
-                        for exp in bp_asset.exports: bp_asset.name2exp[exp.object_name.str] = exp
-                    
-                    for comp in bp_comps:
-                        child_export = comp.value
-                        #ProcessExport(child_export) # TODO? Can't, need to partly process gend_exp & child_export
-                        if child_export.export_class_type == 'StaticMeshComponent':
-                            gend_exp = bp_asset.name2exp.get(f"{child_export.object_name.str}_GEN_VARIABLE")
-                            if gend_exp:
-                                gend_exp.ReadProperties()
-
-                                mesh = TryGetStaticMesh(gend_exp)
-                                child_export.bl_obj = obj = SetupObject(bpy.context, child_export.object_name.str, mesh)
-
-                                attach = child_export.properties.TryGetValue('AttachParent') # TODO: unify?
-                                if attach:
-                                    if hasattr(attach, 'bl_obj'): obj.parent = attach.bl_obj
-                                    else: raise
-
-                                Transform(gend_exp, obj)
-                return
-def LoadUAssetScene(filepath):
-    with UAsset(filepath) as asset:
-        for export in asset.exports:
-            ProcessExport(export)
-        if hasattr(asset, 'import_cache'):
-            for imp_asset in asset.import_cache.values(): imp_asset.Close()
-
-#asset = UAsset(r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\Door_A_BP.uasset")
-#asset.Read()
-#LoadUAssetScene(filepath)
-
-asset_path = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\T_Lights_Diff.uasset"
-#subprocess.run((umodel_path, "-export", "-png", asset_path))
-subprocess.run(f"\"{umodel_path}\" -export -png \"{asset_path}\"")
-
+ImportUMaterial(filepath)
 print("Done")
