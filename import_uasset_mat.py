@@ -1,17 +1,21 @@
 from __future__ import annotations
-import bpy, io, uuid, time, os, pathlib
+import bpy, io, uuid, time, os, pathlib, subprocess
 from struct import *
 from mathutils import *
 
-#filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\Samples\M_Base_Trim.uasset"
-filepath = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\M_Base_Trim.uasset"
+filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\Samples\M_Base_Trim.uasset"
+#filepath = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\M_Base_Trim.uasset"
 exported_base_dir = r"F:\Art\Assets"
 project_dir = r"F:\Projects\Unreal Projects\Assets"
+#umodel_path = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\umodel.exe"
+umodel_path = r"F:\Art\Assets\Game\Blender UE4 Importer\umodel.exe"
 
 logging = True
 
 exported_base_dir = os.path.normpath(exported_base_dir)
 project_dir = os.path.normpath(project_dir)
+extract_dir = os.path.join(project_dir, "Export")
+extracted_imports = {}
 
 class ByteStream:
     def __init__(self, byte_stream:io.BufferedReader): self.byte_stream = byte_stream
@@ -154,6 +158,7 @@ class Properties(dict):
             prop = UProperty()
             if prop.TryRead(asset, header, read_children): self[prop.name] = prop
             else: break
+        return self
     def TryGetValue(self, key:str, default=None):
         property = self.get(key)
         return property.value if property else default
@@ -416,7 +421,24 @@ class UAsset:
     def __exit__(self, *args): self.Close()
 
 def ArchiveToProjectPath(path): return os.path.join(project_dir, "Content", str(pathlib.Path(path).relative_to("\\Game"))) + ".uasset"
-
+def TryGetExtractedImport(imp:Import, extract_dir):
+    archive_path = imp.import_ref.object_name.str
+    extracted = extracted_imports.get(archive_path)
+    if not extracted:
+        match imp.class_name: # TODO: unify
+            case 'StaticMesh': extension = "gltf"
+            case 'Texture2D': extension = "png"
+            case _: raise
+        extracted_path = os.path.normpath(extract_dir + archive_path + f".{extension}")
+        if not os.path.exists(extracted_path):
+            asset_path = ArchiveToProjectPath(archive_path)
+            extract_dir = os.path.join(extract_dir, "Game")
+            subprocess.run(f"\"{umodel_path}\" -export -{extension} -out=\"{extract_dir}\" \"{asset_path}\"")
+        match imp.class_name:
+            case 'StaticMesh': raise #bpy.ops.import_scene.gltf(filepath=extracted_path, merge_vertices=True, import_pack_images=False)
+            case 'Texture2D': extracted = bpy.data.images.load(extracted_path, check_existing=True)
+        extracted_imports[archive_path] = extracted
+    return extracted
 
 
 class UE2BlenderNodeMapping():
@@ -463,7 +485,7 @@ UE2BlenderNode_dict = {
     'CheapContrast_RGB' : UE2BlenderNodeMapping('ShaderNodeBrightContrast', hide=False, inputs={'FunctionInputs(0)':'Color','FunctionInputs(1)':'Contrast'}),
     'BlendAngleCorrectedNormals' : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='BlendAngleCorrectedNormals', hide=False, inputs={'FunctionInputs(0)':0,'FunctionInputs(1)':1}),
 }
-class_blacklist = { 'SceneThumbnailInfoWithPrimitive', 'MaterialExpressionPanner' }
+class_blacklist = { 'SceneThumbnailInfoWithPrimitive', 'MetaData', 'MaterialExpressionPanner' }
 material_classes = { 'Material', 'MaterialInstanceConstant' }
 node_whitelist = { 'ShaderNodeBsdfPrincipled', 'ShaderNodeOutputMaterial' }
 param_x = 'MaterialExpressionEditorX'
@@ -505,26 +527,94 @@ def SetupNode(node_tree, name, mapping, node_data): # TODO: inline
         case 'ShaderNodeMixRGB':
             node.inputs['Fac'].default_value = 0
     return node
-def SetPos(node, param_x, param_y, params): node.location = (int(params.get(param_x,"0")), -int(params.get(param_y,"0")))
-def ImportUMaterial(filepath):
+def SetPos(node, param_x, param_y, params:Properties): node.location = (params.TryGetValue(param_x,0), -params.TryGetValue(param_y,0))
+def ImportUMaterial(filepath, mat_object=None): # TODO: return asset
     t0 = time.time()
     if logging: print(f"Import \"{filepath}\"")
 
-    with UAsset(filepath) as asset: asset.ReadProperties()# TODO: lazy faster?
+    with UAsset(filepath) as asset: asset.ReadProperties()# TODO: lazy faster? (probably not)
 
+    # TODO: create mat here? Will mat name always match the file? (probably)
     mat = None
-    mat_name = None
+    node_tree = None
+    graph_data = GraphData() # TODO: replace with attributes on export
+    nodes_data = graph_data.nodes_data
 
     for exp in asset.exports:
-        match exp.export_class_type:
-            case 'Material':
-                mat_name = exp.object_name.FullName()
-                mat = bpy.data.materials.new(mat_name)
+        classname = exp.export_class_type
+        params = exp.properties
+        match classname:
+            case 'Material': # TODO: can this not be first?
+                mat = bpy.data.materials.new(exp.object_name.FullName())
+                mat.use_nodes = True
+                node_tree = mat.node_tree
+
+                node = node_tree.nodes['Principled BSDF']
+                SetPos(node, 'EditorX', 'EditorY', params)
+                node_tree.nodes['Material Output'].location = node.location + Vector((300,0))
+            case 'MaterialInstanceConstant':
+                raise
+            case _:
+                name = exp.object_name.FullName()
+                nodes_data[name] = node_data = NodeData(classname)
+                node_data.params = params
+
+                if classname in class_blacklist: continue # TODO: iterate material expression array instead
+
+                if classname == 'MaterialExpressionMaterialFunctionCall': # TODO: import subtree from unreal directory
+                    node_data.classname = classname = params.TryGetValue('MaterialFunction').object_name.FullName()
+
+                mapping = UE2BlenderNode_dict.get(classname)
+                if not mapping:
+                    print(f"UNKNOWN CLASS: {classname}")
+                    mapping = default_mapping
+                
+                node_data.node = node = SetupNode(node_tree, name, mapping, node_data)
+
+                SetPos(node, param_x, param_y, params)
+                sx, sy = (params.TryGetValue('SizeX'), params.TryGetValue('SizeY'))
+                if sx != None: node.width = sx
+                if sy != None: node.height = sy
+                txt, param_name = (params.TryGetValue('Text'), params.TryGetValue('ParameterName'))
+                if txt: node.label = txt
+                elif param_name: node.label = param_name
+                value = params.TryGetValue('DefaultValue')
+                if value == None: value = params.TryGetValue('Constant')
+                if value != None: # TODO: move to mapping class?
+                    match classname:
+                        case 'MaterialExpressionScalarParameter':
+                            node.outputs[0].default_value = value
+                        case 'MaterialExpressionVectorParameter' | 'MaterialExpressionConstant3Vector':
+                            node.inputs['RGB'].default_value = value
+                            node.inputs['A'].default_value = value[3]
+                        case 'MaterialExpressionStaticSwitchParameter':
+                            node.inputs['Fac'].default_value = 1 if value else 0
+                match classname:
+                    case 'MaterialExpressionTextureCoordinate':
+                        uv_i = params.TryGetValue('CoordinateIndex')
+                        if uv_i != None:
+                            if mat_object == None: mat_object = bpy.context.object # TODO: less fragile?
+                            node.uv_map = mat_object.data.uv_layers.keys()[uv_i]
+                    case 'MaterialExpressionTextureSampleParameter2D':
+                        tex_imp = params.TryGetValue('Texture')
+                        if tex_imp:
+                            tex = TryGetExtractedImport(tex_imp, extract_dir)
+                            if tex:
+                                node.image = tex
+                                if params.TryGetValue('SamplerType') == 'SAMPLERTYPE_Normal':
+                                    node.image.colorspace_settings.name = 'Non-Color'
+                                    node.interpolation = 'Smart'
+                            else: print(f"Missing Texture \"{tex_imp.import_ref.object_name.str}\"")
+                expr_guid = params.TryGetValue('ExpressionGUID')
+                if expr_guid: graph_data.node_guids[expr_guid] = node_data
+
+                if node_data.link_indirect: node_data.link_indirect.data.location = node.location + Vector((100,30))
 
     
-    if logging: print(f"Imported {mat_name}: {(time.time() - t0) * 1000:.2f}ms")
+    if logging: print(f"Imported {mat.name}: {(time.time() - t0) * 1000:.2f}ms")
     #return (mat, graph_data)
     return mat
 
+for mat in bpy.data.materials: bpy.data.materials.remove(mat)
 ImportUMaterial(filepath)
 print("Done")
