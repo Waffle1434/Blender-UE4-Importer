@@ -11,6 +11,8 @@ project_dir = r"F:\Projects\Unreal Projects\Assets"
 umodel_path = r"F:\Art\Assets\Game\Blender UE4 Importer\umodel.exe"
 
 logging = True
+mute_ior = True
+mute_fresnel = True
 
 exported_base_dir = os.path.normpath(exported_base_dir)
 project_dir = os.path.normpath(project_dir)
@@ -150,8 +152,6 @@ class Export: #FObjectExport
         if extras_len < 0: raise
         else:
             self.extras = [x for x in self.asset.f.ReadBytes(extras_len)] if extras_len > 0 else None
-            #match self.export_class_type:
-                #case "ObjectProperty": # [0, i_exp(self), 1, 4, 4, 196, 0]
 class Properties(dict):
     def Read(self, asset:UAsset, header=True, read_children=True):
         while True:
@@ -451,10 +451,10 @@ class UE2BlenderNodeMapping():
         self.outputs = outputs
         self.color = color
 class NodeData():
-    def __init__(self, classname, node=None, params=None, link_indirect=None, input_remap=None):
-        self.classname = classname
+    def __init__(self, export, classname=None, node=None, link_indirect=None, input_remap=None):
+        self.export = export
+        self.classname = classname if classname else export.export_class_type
         self.node = node
-        self.params = params
         self.link_indirect = link_indirect
         self.input_remap = input_remap
 class GraphData(): # TODO: redundant, only returned node_guids used
@@ -482,8 +482,8 @@ UE2BlenderNode_dict = {
     'MaterialExpressionDesaturation' : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='Desaturation', inputs={'Input':0,'Fraction':1}),
     'MaterialExpressionComment' : UE2BlenderNodeMapping('NodeFrame'),
     'MaterialExpressionFresnel' : UE2BlenderNodeMapping('ShaderNodeFresnel', hide=False),
-    'CheapContrast_RGB' : UE2BlenderNodeMapping('ShaderNodeBrightContrast', hide=False, inputs={'FunctionInputs(0)':'Color','FunctionInputs(1)':'Contrast'}),
-    'BlendAngleCorrectedNormals' : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='BlendAngleCorrectedNormals', hide=False, inputs={'FunctionInputs(0)':0,'FunctionInputs(1)':1}),
+    'CheapContrast_RGB' : UE2BlenderNodeMapping('ShaderNodeBrightContrast', hide=False, inputs={'FunctionInputs':('Color','Contrast')}),
+    'BlendAngleCorrectedNormals' : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='BlendAngleCorrectedNormals', hide=False, inputs={'FunctionInputs':(0,1)}),
 }
 class_blacklist = { 'SceneThumbnailInfoWithPrimitive', 'MetaData', 'MaterialExpressionPanner' }
 material_classes = { 'Material', 'MaterialInstanceConstant' }
@@ -499,6 +499,7 @@ def SetupNode(node_tree, name, mapping, node_data): # TODO: inline
     node = node_tree.nodes.new(mapping.bl_idname)
     node.name = name
     node.hide = mapping.hide
+    SetNodePos(node, param_x, param_y, node_data.export.properties)
     if mapping.subtype:
         if mapping.bl_idname == 'ShaderNodeGroup': node.node_tree = bpy.data.node_groups[mapping.subtype]
         else: node.operation = mapping.subtype
@@ -509,35 +510,123 @@ def SetupNode(node_tree, name, mapping, node_data): # TODO: inline
     match mapping.bl_idname:
         case 'ShaderNodeTexImage':
             rgb_in = node.outputs['Color']
-            if node_data.params.get('SamplerType') == 'SAMPLERTYPE_Normal':
+            if node_data.export.properties.TryGetValue('SamplerType') == 'SAMPLERTYPE_Normal':
                 rgb2n = node_tree.nodes.new('ShaderNodeGroup')
                 rgb2n.node_tree = bpy.data.node_groups['RGBtoNormal']
                 rgb2n.hide = True
-                SetPos(rgb2n, param_x, param_y, node_data.params)
-                rgb2n.location += Vector((-50,30))
+                SetNodePos(rgb2n, param_x, param_y, node_data.export.properties)
+                rgb2n.location += Vector((0,30))
                 node_tree.links.new(node.outputs['Color'], rgb2n.inputs['RGB'])
                 rgb_in = rgb2n.outputs['Normal']
 
             rgba = node_tree.nodes.new('ShaderNodeGroup')
             rgba.node_tree = bpy.data.node_groups['RGBA']
-            rgba.hide = True
+            rgba.hide = True # TODO: set position here
+            rgba.location = node.location + Vector((120,-32))
             node_tree.links.new(rgb_in, rgba.inputs['RGB'])
             node_tree.links.new(node.outputs['Alpha'], rgba.inputs['A'])
             node_data.link_indirect = rgba.outputs
         case 'ShaderNodeMixRGB':
             node.inputs['Fac'].default_value = 0
     return node
-def SetPos(node, param_x, param_y, params:Properties): node.location = (params.TryGetValue(param_x,0), -params.TryGetValue(param_y,0))
+def SetNodePos(node, param_x, param_y, params:Properties): node.location = (params.TryGetValue(param_x,0), -params.TryGetValue(param_y,0))
+def CreateNode(exp:Export, mat, nodes_data, graph_data, mat_object):
+    name = exp.object_name.FullName()
+    classname = exp.export_class_type # TODO: inline?
+    nodes_data[name] = node_data = NodeData(exp)
+    params = exp.properties
+
+    if classname in class_blacklist: return None # TODO: iterate material expression array instead
+
+    if classname == 'MaterialExpressionMaterialFunctionCall': # TODO: import subtree from unreal directory
+        classname = params.TryGetValue('MaterialFunction').object_name.FullName()
+    node_data.classname = classname
+
+    mapping = UE2BlenderNode_dict.get(classname)
+    if not mapping:
+        print(f"UNKNOWN CLASS: {classname}")
+        mapping = default_mapping
+    
+    node_data.node = node = SetupNode(mat.node_tree, name, mapping, node_data)
+
+    sx, sy = (params.TryGetValue('SizeX'), params.TryGetValue('SizeY'))
+    if sx != None: node.width = sx
+    if sy != None: node.height = sy
+    txt, param_name = (params.TryGetValue('Text'), params.TryGetValue('ParameterName'))
+    if txt: node.label = txt
+    elif param_name: node.label = param_name
+    value = params.TryGetValue('DefaultValue')
+    if value == None: value = params.TryGetValue('Constant')
+    if value != None: # TODO: move to mapping class?
+        match classname:
+            case 'MaterialExpressionScalarParameter':
+                node.outputs[0].default_value = value
+            case 'MaterialExpressionVectorParameter' | 'MaterialExpressionConstant3Vector':
+                node.inputs['RGB'].default_value = value
+                node.inputs['A'].default_value = value[3]
+            case 'MaterialExpressionStaticSwitchParameter':
+                node.inputs['Fac'].default_value = 1 if value else 0
+    match classname:
+        case 'MaterialExpressionTextureCoordinate':
+            uv_i = params.TryGetValue('CoordinateIndex')
+            if uv_i != None:
+                if mat_object == None: mat_object = bpy.context.object # TODO: less fragile?
+                node.uv_map = mat_object.data.uv_layers.keys()[uv_i]
+        case 'MaterialExpressionTextureSampleParameter2D':
+            tex_imp = params.TryGetValue('Texture')
+            if tex_imp:
+                tex = TryGetExtractedImport(tex_imp, extract_dir)
+                if tex:
+                    node.image = tex
+                    if params.TryGetValue('SamplerType') == 'SAMPLERTYPE_Normal':
+                        node.image.colorspace_settings.name = 'Non-Color'
+                        node.interpolation = 'Smart'
+                else: print(f"Missing Texture \"{tex_imp.import_ref.object_name.str}\"")
+    expr_guid = params.TryGetValue('ExpressionGUID')
+    if expr_guid: graph_data.node_guids[expr_guid] = node_data
+    return node_data
+def LinkSocket(mat, nodes_data, node_data, expr, property, socket_mapping):
+    link_node_exp = expr.value.node if expr.struct_type == 'ExpressionInput' else expr.value
+    link_node_name = link_node_exp.object_name.FullName()
+    if link_node_name in nodes_data:
+        link_node_data = nodes_data[link_node_name]
+        link_node_type = link_node_data.classname
+        if link_node_type in class_blacklist: return
+        
+        node, link_node = (node_data.node, link_node_data.node)
+        outputs = link_node_data.link_indirect if link_node_data.link_indirect else link_node.outputs
+        src_socket = outputs[expr.value.node_output_i if expr.struct_type == 'ExpressionInput' else 0]
+        dst_socket = None
+
+        if property in socket_mapping: 
+            if link_node_type == 'MaterialExpressionAppendVector' and node.bl_idname == 'ShaderNodeCombineXYZ': raise Exception("Unreal's append is annoying")
+            dst_socket = node.inputs[socket_mapping[property]] # dst_index
+        else: print(f"UNKNOWN PARAM: {node.name}.{property}")
+        if node_data.input_remap and property in node_data.input_remap: dst_socket = node_data.input_remap[property]
+        if src_socket and dst_socket:
+            link = mat.node_tree.links.new(src_socket, dst_socket)
+            if mute_fresnel and src_socket.node.bl_idname == 'ShaderNodeFresnel': link.is_muted = True
+        else: print(f"FAILED LINK: {node.name}.{property}")
+    else: print(f"MISSING NODE: {str(link_node_name)}")
+def LinkSockets(mat, nodes_data, node_data):
+    mapping = UE2BlenderNode_dict.get(node_data.classname)
+    if mapping and mapping.inputs:
+        for property in mapping.inputs:
+            if property in node_data.export.properties:
+                expr = node_data.export.properties[property]
+                match expr.type:
+                    case 'StructProperty': LinkSocket(mat, nodes_data, node_data, expr, property, mapping.inputs)
+                    case 'ArrayProperty':
+                        for i, elem in enumerate(expr.value): LinkSocket(mat, nodes_data, node_data, elem['Input'], i, { i:mapping.inputs[property][i] })
 def ImportUMaterial(filepath, mat_object=None): # TODO: return asset
     t0 = time.time()
     if logging: print(f"Import \"{filepath}\"")
 
     with UAsset(filepath) as asset: asset.ReadProperties()# TODO: lazy faster? (probably not)
 
-    # TODO: create mat here? Will mat name always match the file? (probably)
     mat = None
     node_tree = None
-    graph_data = GraphData() # TODO: replace with attributes on export
+    graph_data = GraphData() # TODO: replace with attributes on export?
     nodes_data = graph_data.nodes_data
 
     for exp in asset.exports:
@@ -548,68 +637,48 @@ def ImportUMaterial(filepath, mat_object=None): # TODO: return asset
                 mat = bpy.data.materials.new(exp.object_name.FullName())
                 mat.use_nodes = True
                 node_tree = mat.node_tree
-
                 node = node_tree.nodes['Principled BSDF']
-                SetPos(node, 'EditorX', 'EditorY', params)
+                SetNodePos(node, 'EditorX', 'EditorY', params)
                 node_tree.nodes['Material Output'].location = node.location + Vector((300,0))
+                node_data = NodeData(exp, node=node)
+
+                for exr_exp in params.TryGetValue('Expressions', ()): CreateNode(exr_exp.value, mat, nodes_data, graph_data, mat_object)
+                for comment_exp in params.TryGetValue('EditorComments', ()):
+                    comment_node = CreateNode(comment_exp.value, mat, nodes_data, graph_data, mat_object).node
+                    for eval_node in filter(lambda n: not n.parent, node_tree.nodes):
+                        diff = eval_node.location - comment_node.location
+                        if diff.x > 0 and diff.x < comment_node.width and diff.y < 0 and diff.y > -comment_node.height: eval_node.parent = comment_node
+
+                match params.TryGetValue('BlendMode'):
+                    case 'BLEND_Translucent':
+                        mat.blend_method, mat.shadow_method = ('BLEND', 'HASHED')
+                        node.inputs['Transmission'].default_value = 1
+                    case 'BLEND_Masked':
+                        mat.blend_method = mat.shadow_method = 'CLIP'
+                    case _:
+                        mat.blend_method = mat.shadow_method = 'OPAQUE'
+                mat.use_backface_culling = not params.TryGetValue('TwoSided', False)
+
+                if 'Normal' in params:
+                    normal_map = node_tree.nodes.new('ShaderNodeNormalMap') # TODO: set normal uv
+                    normal_map.location = node.location + Vector((-200, -570))
+                    node_tree.links.new(normal_map.outputs['Normal'], node.inputs['Normal'])
+
+                    n2rgb = node_tree.nodes.new('ShaderNodeGroup')
+                    n2rgb.node_tree = bpy.data.node_groups['NormalToRGB']
+                    n2rgb.location = normal_map.location + Vector((-160, -130))
+                    n2rgb.hide = True
+                    node_tree.links.new(n2rgb.outputs['RGB'], normal_map.inputs['Color'])
+
+                    node_data.input_remap = { 'Normal':n2rgb.inputs['Normal'] }
+
+                for name in nodes_data: LinkSockets(mat, nodes_data, nodes_data[name]) # TODO: this iterates nodes without links!
+                LinkSockets(mat, nodes_data, node_data)
+                
+                ior = node.inputs['IOR']
+                if ior.is_linked: ior.links[0].is_muted = mute_ior
             case 'MaterialInstanceConstant':
                 raise
-            case _:
-                name = exp.object_name.FullName()
-                nodes_data[name] = node_data = NodeData(classname)
-                node_data.params = params
-
-                if classname in class_blacklist: continue # TODO: iterate material expression array instead
-
-                if classname == 'MaterialExpressionMaterialFunctionCall': # TODO: import subtree from unreal directory
-                    node_data.classname = classname = params.TryGetValue('MaterialFunction').object_name.FullName()
-
-                mapping = UE2BlenderNode_dict.get(classname)
-                if not mapping:
-                    print(f"UNKNOWN CLASS: {classname}")
-                    mapping = default_mapping
-                
-                node_data.node = node = SetupNode(node_tree, name, mapping, node_data)
-
-                SetPos(node, param_x, param_y, params)
-                sx, sy = (params.TryGetValue('SizeX'), params.TryGetValue('SizeY'))
-                if sx != None: node.width = sx
-                if sy != None: node.height = sy
-                txt, param_name = (params.TryGetValue('Text'), params.TryGetValue('ParameterName'))
-                if txt: node.label = txt
-                elif param_name: node.label = param_name
-                value = params.TryGetValue('DefaultValue')
-                if value == None: value = params.TryGetValue('Constant')
-                if value != None: # TODO: move to mapping class?
-                    match classname:
-                        case 'MaterialExpressionScalarParameter':
-                            node.outputs[0].default_value = value
-                        case 'MaterialExpressionVectorParameter' | 'MaterialExpressionConstant3Vector':
-                            node.inputs['RGB'].default_value = value
-                            node.inputs['A'].default_value = value[3]
-                        case 'MaterialExpressionStaticSwitchParameter':
-                            node.inputs['Fac'].default_value = 1 if value else 0
-                match classname:
-                    case 'MaterialExpressionTextureCoordinate':
-                        uv_i = params.TryGetValue('CoordinateIndex')
-                        if uv_i != None:
-                            if mat_object == None: mat_object = bpy.context.object # TODO: less fragile?
-                            node.uv_map = mat_object.data.uv_layers.keys()[uv_i]
-                    case 'MaterialExpressionTextureSampleParameter2D':
-                        tex_imp = params.TryGetValue('Texture')
-                        if tex_imp:
-                            tex = TryGetExtractedImport(tex_imp, extract_dir)
-                            if tex:
-                                node.image = tex
-                                if params.TryGetValue('SamplerType') == 'SAMPLERTYPE_Normal':
-                                    node.image.colorspace_settings.name = 'Non-Color'
-                                    node.interpolation = 'Smart'
-                            else: print(f"Missing Texture \"{tex_imp.import_ref.object_name.str}\"")
-                expr_guid = params.TryGetValue('ExpressionGUID')
-                if expr_guid: graph_data.node_guids[expr_guid] = node_data
-
-                if node_data.link_indirect: node_data.link_indirect.data.location = node.location + Vector((100,30))
-
     
     if logging: print(f"Imported {mat.name}: {(time.time() - t0) * 1000:.2f}ms")
     #return (mat, graph_data)
