@@ -624,16 +624,14 @@ def ImportUMaterial(filepath, mat_name=None, mat_object=None): # TODO: return as
 
     with UAsset(filepath) as asset: asset.ReadProperties()# TODO: lazy faster? (probably not)
 
-    mat = None
-    node_tree = None
-    graph_data = GraphData() # TODO: replace with attributes on export?
-    nodes_data = graph_data.nodes_data
-
     for exp in asset.exports:
         classname = exp.export_class_type
         params = exp.properties
         match classname:
             case 'Material': # TODO: can this not be first?
+                graph_data = GraphData() # TODO: replace with attributes on export?
+                nodes_data = graph_data.nodes_data
+
                 if not mat_name: mat_name = exp.object_name.FullName()
                 mat = bpy.data.materials.new(mat_name)
                 mat.use_nodes = True
@@ -685,30 +683,24 @@ def ImportUMaterial(filepath, mat_name=None, mat_object=None): # TODO: return as
                 if not mat_name: mat_name = exp.object_name.FullName() # TODO: unify
                 mat, graph_data = ImportUMaterial(mat_path, mat_name, mat_object) # TODO: handle not found
 
-                for property in params:# TODO: don't iterate, get by key
-                    match property:
-                        case 'ScalarParameterValues':
-                            for param in params.TryGetValue(property):
-                                node_data = graph_data.node_guids.get(param.value.TryGetValue('ExpressionGUID'))
-                                if node_data: node_data.node.outputs[0].default_value = param.value.TryGetValue('ParameterValue')
-                        case 'VectorParameterValues':
-                            for param in params.TryGetValue(property):
-                                node_data = graph_data.node_guids.get(param.value.TryGetValue('ExpressionGUID'))
-                                if node_data:
-                                    node = node_data.node
-                                    value = param.value.TryGetValue('ParameterValue')
-                                    node.inputs['RGB'].default_value = value
-                                    node.inputs['A'].default_value = value[3]
-                        case 'TextureParameterValues':
-                            for param in params.TryGetValue(property):
-                                node = graph_data.node_guids.get(param.value.TryGetValue('ExpressionGUID')).node
-                                tex_imp = param.value.TryGetValue('ParameterValue')
-                                if tex_imp:
-                                    tex = TryGetExtractedImport(tex_imp, extract_dir) # TODO: reuse?
-                                    if tex:
-                                        if node.image: tex.colorspace_settings.name = node.image.colorspace_settings.name
-                                        node.image = tex
-                                    else: print(f"Missing Texture \"{tex_imp.import_ref.object_name.str}\"")
+                for param in params.TryGetValue('ScalarParameterValues', ()):
+                    node_data = graph_data.node_guids.get(param.value.TryGetValue('ExpressionGUID'))
+                    if node_data: node_data.node.outputs[0].default_value = param.value.TryGetValue('ParameterValue')
+                for param in params.TryGetValue('VectorParameterValues', ()):
+                    node_data = graph_data.node_guids.get(param.value.TryGetValue('ExpressionGUID'))
+                    if node_data:
+                        node, value = (node_data.node, param.value.TryGetValue('ParameterValue'))
+                        node.inputs['RGB'].default_value = value
+                        node.inputs['A'].default_value = value[3]
+                for param in params.TryGetValue('TextureParameterValues', ()):
+                    tex_imp = param.value.TryGetValue('ParameterValue')
+                    if tex_imp:
+                        tex = TryGetExtractedImport(tex_imp, extract_dir) # TODO: reuse?
+                        if tex:
+                            node = graph_data.node_guids.get(param.value.TryGetValue('ExpressionGUID')).node
+                            if node.image: tex.colorspace_settings.name = node.image.colorspace_settings.name
+                            node.image = tex
+                        else: print(f"Missing Texture \"{tex_imp.import_ref.object_name.str}\"")
     
     if logging: print(f"Imported {mat.name}: {(time.time() - t0) * 1000:.2f}ms")
     return (mat, graph_data)

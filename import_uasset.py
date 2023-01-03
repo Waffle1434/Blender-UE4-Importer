@@ -109,7 +109,7 @@ class Import: #FObjectImport
         self.class_name = asset.f.ReadFName(asset.names).str
         self.outer_index = asset.f.ReadInt32() # TODO: don't store
         self.object_name = asset.f.ReadFName(asset.names)
-        if editor and asset.version_ue4 >= 520: self.package_name = asset.f.ReadFName(asset.names)
+        if editor and asset.summary.version_ue4 >= 520: self.package_name = asset.f.ReadFName(asset.names)
         self.asset = asset
     @property
     def import_ref(self): return self.asset.TryGetImport(self.outer_index)
@@ -119,17 +119,17 @@ class Export: #FObjectExport
         self.asset = asset
         f = asset.f
         self.class_index, self.super_index = (f.ReadInt32(), f.ReadInt32())
-        if asset.version_ue4 >= 508: self.template_index = f.ReadInt32()
+        if asset.summary.version_ue4 >= 508: self.template_index = f.ReadInt32()
         self.outer_index = f.ReadInt32()
         self.object_name = f.ReadFName(asset.names)
         self.object_flags = f.ReadUInt32()
-        self.serial_desc = ArrayDesc(f, asset.version_ue4 < 511)
+        self.serial_desc = ArrayDesc(f, asset.summary.version_ue4 < 511)
         self.force_export, self.not_for_client, self.not_for_server = (f.ReadIntBool(), f.ReadIntBool(), f.ReadIntBool())
         self.package_guid = f.ReadGuid()
         self.package_flags = f.ReadUInt32()
-        if asset.version_ue4 >= 365: self.not_always_loaded_for_editor = f.ReadIntBool()
-        if asset.version_ue4 >= 465: self.is_asset = f.ReadIntBool()
-        if asset.version_ue4 >= 507:
+        if asset.summary.version_ue4 >= 365: self.not_always_loaded_for_editor = f.ReadIntBool()
+        if asset.summary.version_ue4 >= 465: self.is_asset = f.ReadIntBool()
+        if asset.summary.version_ue4 >= 507:
             self.export_depends_offset = f.ReadInt32()
             self.ser_before_ser_depends_size = f.ReadInt32()
             self.create_before_ser_depends_size = f.ReadInt32()
@@ -188,7 +188,7 @@ class UProperty:
             case "StructProperty":
                 if header:
                     self.struct_type = f.ReadFName(asset.names).str
-                    if asset.version_ue4 >= 441: self.struct_guid = f.ReadGuid()
+                    if asset.summary.version_ue4 >= 441: self.struct_guid = f.ReadGuid()
                     self.guid = asset.TryReadPropertyGuid()
 
                 header = False
@@ -229,7 +229,7 @@ class UProperty:
                     self.guid = asset.TryReadPropertyGuid()
                 element_count = f.ReadInt32()
                 if self.array_type == "StructProperty":
-                    if asset.version_ue4 >= 500:
+                    if asset.summary.version_ue4 >= 500:
                         self.array_name = f.ReadFName(asset.names).FullName()
                         if self.array_name == "None": raise
                         self.array_el_type = f.ReadFName(asset.names).str
@@ -328,21 +328,9 @@ class UProperty:
                 self.value = [x for x in f.ReadBytes(self.len)]
             case _: raise Exception(f"Uknown Property Type \"{self.type}\"")
         return True
-class UAsset:
-    def __init__(self, filepath): self.filepath = filepath
-    def __repr__(self) -> str: return f"\"{self.f.byte_stream.name}\", {len(self.imports)} Imports, {len(self.exports)} Exports"
-    def GetImport(self, i) -> Import: return self.imports[-i - 1]
-    def GetExport(self, i) -> Export: return self.exports[i - 1]
-    def TryGetImport(self, i) -> Export: return self.GetImport(i) if i < 0 else None
-    def TryGetExport(self, i) -> Export: return self.GetExport(i) if i > 0 else None
-    def DecodePackageIndex(self, i):
-        if i < 0: return self.GetImport(i)
-        elif i > 0: return self.GetExport(i)
-        else: return None #raise Exception("Invalid Package Index of 0")
-    def TryReadPropertyGuid(self) -> uuid.UUID: return self.f.ReadGuid() if self.version_ue4 >= 503 and self.f.ReadBool() else None
-    #def TryReadProperty(self): # TODO
-    def ReadHeader(self, editor=True): # UE4 PackageFileSummary.cpp
-        f = self.f
+class USummary:
+    def __init__(self, asset:UAsset, editor=True): # UE4 PackageFileSummary.cpp
+        f = asset.f
         sig = f.ReadUInt32()
         if sig != 0x9E2A83C1: raise Exception(f"Unknown signature: {sig:X}")
 
@@ -392,28 +380,41 @@ class UAsset:
             for i in range(f.ReadInt32()): chunk_id = f.ReadInt32()
         elif version_ue4 >= 278: chunk_id = f.ReadInt32()
         if version_ue4 >= 507: self.preload_depends_desc = ArrayDesc(f)
+class UAsset:
+    def __init__(self, filepath): self.filepath = filepath
+    def __repr__(self) -> str: return f"\"{self.f.byte_stream.name}\", {len(self.imports)} Imports, {len(self.exports)} Exports"
+    def GetImport(self, i) -> Import: return self.imports[-i - 1]
+    def GetExport(self, i) -> Export: return self.exports[i - 1]
+    def TryGetImport(self, i) -> Export: return self.GetImport(i) if i < 0 else None
+    def TryGetExport(self, i) -> Export: return self.GetExport(i) if i > 0 else None
+    def DecodePackageIndex(self, i):
+        if i < 0: return self.GetImport(i)
+        elif i > 0: return self.GetExport(i)
+        else: return None #raise Exception("Invalid Package Index of 0")
+    def TryReadPropertyGuid(self) -> uuid.UUID: return self.f.ReadGuid() if self.summary.version_ue4 >= 503 and self.f.ReadBool() else None
+    #def TryReadProperty(self): # TODO
     def Read(self, read_all=True): # PackageReader.cpp
         t0 = time.time()
         self.f = ByteStream(open(self.filepath, 'rb'))
-        self.ReadHeader()
-        
+        self.summary = summary = USummary(self)
+
         self.names:list[str] = []
-        if self.names_desc.TrySeek(self.f):
-            for i in range(self.names_desc.count):
+        if summary.names_desc.TrySeek(self.f):
+            for i in range(summary.names_desc.count):
                 name = self.f.ReadFString()
                 self.names.append(name)
-                if self.version_ue4 >= 504 and name != "": hash = self.f.ReadUInt32()
+                if summary.version_ue4 >= 504 and name != "": hash = self.f.ReadUInt32()
         
         self.imports:list[Import] = []
-        if self.imports_desc.TrySeek(self.f):
-            for i in range(self.imports_desc.count): self.imports.append(Import(self))
+        if summary.imports_desc.TrySeek(self.f):
+            for i in range(summary.imports_desc.count): self.imports.append(Import(self))
         
         self.exports:list[Export] = []
-        if self.exports_desc.TrySeek(self.f):
-            for i in range(self.exports_desc.count): self.exports.append(Export(self))
+        if summary.exports_desc.TrySeek(self.f):
+            for i in range(summary.exports_desc.count): self.exports.append(Export(self))
 
-        if read_all and self.header_size > 0 and self.exports_desc.count > 0:
-            for i in range(self.exports_desc.count):
+        if read_all and summary.header_size > 0 and summary.exports_desc.count > 0:
+            for i in range(summary.exports_desc.count):
                 self.exports[i].ReadProperties()
             self.f.byte_stream.close()
             print(f"Imported {self} in {time.time() - t0:.2f}s")
@@ -583,12 +584,13 @@ def LoadUAssetScene(filepath):
         if hasattr(asset, 'import_cache'):
             for imp_asset in asset.import_cache.values(): imp_asset.Close()
 
-#asset = UAsset(r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\Door_A_BP.uasset")
-#asset.Read()
+asset = UAsset(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Materials\M_Base_Trim.uasset")
+#asset = UAsset(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Meshes\SM_Door_Small_A.uasset")
+asset.Read()
 #LoadUAssetScene(filepath)
 
-asset_path = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\T_Lights_Diff.uasset"
+#asset_path = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\T_Lights_Diff.uasset"
 #subprocess.run((umodel_path, "-export", "-png", asset_path))
-subprocess.run(f"\"{umodel_path}\" -export -png \"{asset_path}\"")
+#subprocess.run(f"\"{umodel_path}\" -export -png \"{asset_path}\"")
 
 print("Done")
