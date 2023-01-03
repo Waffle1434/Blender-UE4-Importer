@@ -3,7 +3,8 @@ import bpy, io, uuid, time, os, pathlib, subprocess
 from struct import *
 from mathutils import *
 
-filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\Samples\M_Base_Trim.uasset"
+#filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\Samples\M_Base_Trim.uasset"
+filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\Samples\MI_Trim_A_Red2.uasset"
 #filepath = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\M_Base_Trim.uasset"
 exported_base_dir = r"F:\Art\Assets"
 project_dir = r"F:\Projects\Unreal Projects\Assets"
@@ -204,7 +205,7 @@ class UProperty:
                         self.value = asset.GetExport(f.ReadInt32())# TODO: other data is default value?
                         f.Seek(p + self.len)
                     case "ExpressionInput": self.value = FExpressionInput(asset)
-                    case "ExpressionOutput": self.value = Properties().Read(asset)
+                    case "ExpressionOutput" | "ScalarParameterValue" | "TextureParameterValue" | "VectorParameterValue": self.value = Properties().Read(asset)
                     case "StreamingTextureBuildInfo": self.value = [x for x in f.ReadBytes(self.len)]
                     case _:
                         self.value = [x for x in f.ReadBytes(self.len)]
@@ -579,8 +580,7 @@ def CreateNode(exp:Export, mat, nodes_data, graph_data, mat_object):
                 if tex:
                     node.image = tex
                     if params.TryGetValue('SamplerType') == 'SAMPLERTYPE_Normal':
-                        node.image.colorspace_settings.name = 'Non-Color'
-                        node.interpolation = 'Smart'
+                        node.image.colorspace_settings.name, node.interpolation = ('Non-Color', 'Smart')
                 else: print(f"Missing Texture \"{tex_imp.import_ref.object_name.str}\"")
     expr_guid = params.TryGetValue('ExpressionGUID')
     if expr_guid: graph_data.node_guids[expr_guid] = node_data
@@ -618,7 +618,7 @@ def LinkSockets(mat, nodes_data, node_data):
                     case 'StructProperty': LinkSocket(mat, nodes_data, node_data, expr, property, mapping.inputs)
                     case 'ArrayProperty':
                         for i, elem in enumerate(expr.value): LinkSocket(mat, nodes_data, node_data, elem['Input'], i, { i:mapping.inputs[property][i] })
-def ImportUMaterial(filepath, mat_object=None): # TODO: return asset
+def ImportUMaterial(filepath, mat_name=None, mat_object=None): # TODO: return asset
     t0 = time.time()
     if logging: print(f"Import \"{filepath}\"")
 
@@ -634,7 +634,8 @@ def ImportUMaterial(filepath, mat_object=None): # TODO: return asset
         params = exp.properties
         match classname:
             case 'Material': # TODO: can this not be first?
-                mat = bpy.data.materials.new(exp.object_name.FullName())
+                if not mat_name: mat_name = exp.object_name.FullName()
+                mat = bpy.data.materials.new(mat_name)
                 mat.use_nodes = True
                 node_tree = mat.node_tree
                 node = node_tree.nodes['Principled BSDF']
@@ -678,11 +679,39 @@ def ImportUMaterial(filepath, mat_object=None): # TODO: return asset
                 ior = node.inputs['IOR']
                 if ior.is_linked: ior.links[0].is_muted = mute_ior
             case 'MaterialInstanceConstant':
-                raise
+                mat_parent = params.TryGetValue('Parent')
+                #mat_parent_name = mat_parent.object_name.FullName()
+                mat_path = ArchiveToProjectPath(mat_parent.import_ref.object_name.FullName())
+                if not mat_name: mat_name = exp.object_name.FullName() # TODO: unify
+                mat, graph_data = ImportUMaterial(mat_path, mat_name, mat_object) # TODO: handle not found
+
+                for property in params:# TODO: don't iterate, get by key
+                    match property:
+                        case 'ScalarParameterValues':
+                            for param in params.TryGetValue(property):
+                                node_data = graph_data.node_guids.get(param.value.TryGetValue('ExpressionGUID'))
+                                if node_data: node_data.node.outputs[0].default_value = param.value.TryGetValue('ParameterValue')
+                        case 'VectorParameterValues':
+                            for param in params.TryGetValue(property):
+                                node_data = graph_data.node_guids.get(param.value.TryGetValue('ExpressionGUID'))
+                                if node_data:
+                                    node = node_data.node
+                                    value = param.value.TryGetValue('ParameterValue')
+                                    node.inputs['RGB'].default_value = value
+                                    node.inputs['A'].default_value = value[3]
+                        case 'TextureParameterValues':
+                            for param in params.TryGetValue(property):
+                                node = graph_data.node_guids.get(param.value.TryGetValue('ExpressionGUID')).node
+                                tex_imp = param.value.TryGetValue('ParameterValue')
+                                if tex_imp:
+                                    tex = TryGetExtractedImport(tex_imp, extract_dir) # TODO: reuse?
+                                    if tex:
+                                        if node.image: tex.colorspace_settings.name = node.image.colorspace_settings.name
+                                        node.image = tex
+                                    else: print(f"Missing Texture \"{tex_imp.import_ref.object_name.str}\"")
     
     if logging: print(f"Imported {mat.name}: {(time.time() - t0) * 1000:.2f}ms")
-    #return (mat, graph_data)
-    return mat
+    return (mat, graph_data)
 
 for mat in bpy.data.materials: bpy.data.materials.remove(mat)
 ImportUMaterial(filepath)
