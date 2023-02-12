@@ -154,11 +154,10 @@ class Export: #FObjectExport
 
         #match export_class_type: case "Enum" | "UserDefinedEnum": export.enum = # TODO: post "normal export" data
         extras_len = (self.serial_desc.offset + self.serial_desc.count) - self.asset.f.Position()
-        if extras_len < 0: raise
-        else:
-            self.extras = [x for x in self.asset.f.ReadBytes(extras_len)] if extras_len > 0 else None
-            #match self.export_class_type:
-                #case "ObjectProperty": # [0, i_exp(self), 1, 4, 4, 196, 0]
+        assert extras_len >= 0
+        self.extras = [x for x in self.asset.f.ReadBytes(extras_len)] if extras_len > 0 else None
+        #match self.export_class_type:
+            #case "ObjectProperty": # [0, i_exp(self), 1, 4, 4, 196, 0]
 class Properties(dict):
     def Read(self, asset:UAsset, header=True, read_children=True):
         while True:
@@ -181,7 +180,7 @@ class UProperty:
         
         return self.TryReadData(asset, header, read_children)
     def TryReadData(self, asset:UAsset, header=True, read_children=True):
-        if self.type == "None": raise
+        assert self.type != "None"
         f = asset.f
         
         match self.type:
@@ -222,7 +221,7 @@ class UProperty:
                     self.raw = [x for x in f.ReadBytes(self.len)]
                     if logging: print(f"Length Mismatch! {self.struct_type} : {p_diff}")
                 
-                if self.len == 0: raise
+                assert self.len > 0
             case "ArrayProperty":
                 if header:
                     self.array_type = f.ReadFName(asset.names).str
@@ -231,36 +230,35 @@ class UProperty:
                 if self.array_type == "StructProperty":
                     if asset.summary.version_ue4 >= 500:
                         self.array_name = f.ReadFName(asset.names).FullName()
-                        if self.array_name == "None": raise
+                        assert self.array_name != "None"
                         self.array_el_type = f.ReadFName(asset.names).str
-                        if self.array_el_type == "None": raise
-                        if self.array_type != self.array_el_type: raise
+                        assert self.array_el_type != "None"
+                        assert self.array_type == self.array_el_type
                         self.array_size = f.ReadInt64()
                         self.array_el_full_type = f.ReadFName(asset.names).str
                         self.struct_guid = f.ReadGuid()
                         self.guid = asset.TryReadPropertyGuid()
                     else: raise
 
-                    if element_count == 0: raise
-                    else:
-                        self.value = []
-                        next = f.Position() + self.array_size
-                        try:
-                            element_size = int(self.array_size / element_count)
-                            single_prop = self.array_el_full_type not in ("FunctionExpressionInput","FunctionExpressionOutput")
-                            for i in range(element_count):
-                                prop = UProperty()
-                                if single_prop:
-                                    prop.name, prop.type, prop.struct_type, prop.len = ("", self.array_el_type, self.array_el_full_type, element_size)
-                                    if prop.TryReadData(asset, False, read_children): self.value.append(prop)
-                                else:
-                                    self.value.append(Properties().Read(asset))
-                        #except: pass
-                        finally:
-                            p_diff = next - f.Position()
-                            if p_diff != 0:
-                                f.Seek(next)
-                                if logging: print(f"{self.array_name} Array Position Mismatch: {p_diff}")
+                    assert element_count > 0
+                    self.value = []
+                    next = f.Position() + self.array_size
+                    try:
+                        element_size = int(self.array_size / element_count)
+                        single_prop = self.array_el_full_type not in ("FunctionExpressionInput","FunctionExpressionOutput")
+                        for i in range(element_count):
+                            prop = UProperty()
+                            if single_prop:
+                                prop.name, prop.type, prop.struct_type, prop.len = ("", self.array_el_type, self.array_el_full_type, element_size)
+                                if prop.TryReadData(asset, False, read_children): self.value.append(prop)
+                            else:
+                                self.value.append(Properties().Read(asset))
+                    #except: pass
+                    finally:
+                        p_diff = next - f.Position()
+                        if p_diff != 0:
+                            f.Seek(next)
+                            if logging: print(f"{self.array_name} Array Position Mismatch: {p_diff}")
                 else:
                     self.value = []
                     #size_1 = int(self.len / element_count)
@@ -361,7 +359,7 @@ class USummary:
                 persistent_guid = f.ReadGuid()
                 if version_ue4 < 520: owner_persistent_guid = f.ReadGuid()
         generation_count = f.ReadInt32()
-        if generation_count < 0: raise
+        assert generation_count >= 0
         for i in range(generation_count): gen_export_count, get_name_count = (f.ReadInt32(), f.ReadInt32())
         engine_version = EngineVersion.Read(f) if version_ue4 >= 336 else EngineVersion(4,0,0,f.ReadUInt32(),"")
         self.compatible_version = EngineVersion.Read(f) if version_ue4 >= 444 else engine_version
@@ -385,8 +383,8 @@ class UAsset:
     def __repr__(self) -> str: return f"\"{self.f.byte_stream.name}\", {len(self.imports)} Imports, {len(self.exports)} Exports"
     def GetImport(self, i) -> Import: return self.imports[-i - 1]
     def GetExport(self, i) -> Export: return self.exports[i - 1]
-    def TryGetImport(self, i) -> Export: return self.GetImport(i) if i < 0 else None
-    def TryGetExport(self, i) -> Export: return self.GetExport(i) if i > 0 else None
+    def TryGetImport(self, i): return self.GetImport(i) if i < 0 else None
+    def TryGetExport(self, i): return self.GetExport(i) if i > 0 else None
     def DecodePackageIndex(self, i):
         if i < 0: return self.GetImport(i)
         elif i > 0: return self.GetExport(i)
@@ -415,7 +413,7 @@ class UAsset:
 
         if read_all and summary.header_size > 0 and summary.exports_desc.count > 0:
             for i in range(summary.exports_desc.count):
-                self.exports[i].ReadProperties()
+                self.exports[i].ReadProperties(not read_all)
             self.f.byte_stream.close()
             print(f"Imported {self} in {time.time() - t0:.2f}s")
     def Close(self): self.f.byte_stream.close()
@@ -499,7 +497,7 @@ def TryGetStaticMesh(static_mesh_comp:Export):
                 mesh.name = mesh_name
                 mesh.transform(Euler((0,0,90*deg2rad)).to_matrix().to_4x4()*0.01)
     return mesh
-def ProcessExport(export:Export):
+def ProcessSceneExport(export:Export):
     match export.export_class_type:
         case 'PointLight' | 'SpotLight':
             export.ReadProperties()
@@ -561,7 +559,7 @@ def ProcessExport(export:Export):
                     
                     for comp in bp_comps:
                         child_export = comp.value
-                        #ProcessExport(child_export) # TODO? Can't, need to partly process gend_exp & child_export
+                        #ProcessSceneExport(child_export) # TODO? Can't, need to partly process gend_exp & child_export
                         if child_export.export_class_type == 'StaticMeshComponent':
                             gend_exp = bp_asset.name2exp.get(f"{child_export.object_name.str}_GEN_VARIABLE")
                             if gend_exp:
@@ -572,19 +570,20 @@ def ProcessExport(export:Export):
 
                                 attach = child_export.properties.TryGetValue('AttachParent') # TODO: unify?
                                 if attach:
-                                    if hasattr(attach, 'bl_obj'): obj.parent = attach.bl_obj
-                                    else: raise
+                                    assert hasattr(attach, 'bl_obj')
+                                    obj.parent = attach.bl_obj
 
                                 Transform(gend_exp, obj)
                 return
 def LoadUAssetScene(filepath):
     with UAsset(filepath) as asset:
         for export in asset.exports:
-            ProcessExport(export)
+            ProcessSceneExport(export)
         if hasattr(asset, 'import_cache'):
             for imp_asset in asset.import_cache.values(): imp_asset.Close()
 
-asset = UAsset(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Materials\M_Base_Trim.uasset")
+#asset = UAsset(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Materials\M_Base_Trim.uasset")
+asset = UAsset(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary.umap")
 #asset = UAsset(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Meshes\SM_Door_Small_A.uasset")
 asset.Read()
 #LoadUAssetScene(filepath)
