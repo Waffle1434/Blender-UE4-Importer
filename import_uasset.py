@@ -1,6 +1,8 @@
 from __future__ import annotations
+from dataclasses import dataclass, fields
 import bpy, io, uuid, time, math, os, sys, pathlib, subprocess
 from struct import *
+from ctypes import *
 from mathutils import *
 #from . import import_t3d
 
@@ -63,12 +65,27 @@ class ByteStream:
 
     def ReadIntBool(self): return self.ReadInt32() == 1
 
+    def ReadStructure(self, ty : Structure): return ty.from_buffer_copy(self.byte_stream.read(sizeof(ty)))
     def ReadGuid(self): return uuid.UUID(bytes_le=self.ReadBytes(16))
     def ReadFString(self):
         length = self.ReadInt32()
         if length < 0: return self.ReadBytes(-2*length)[:-2].decode('utf-16')
         else: return self.ReadBytes(length)[:-1].decode('ascii')
     def ReadFName(self, names): return FName(self, names)
+def StructToString(struct, names=True):
+    structStr = ""
+    comma = False
+    for name, ty in struct._fields_:
+        if comma: structStr += ", "
+        else: comma = True
+        if names: structStr += f"{name}: "
+        val = getattr(struct, name)
+        structStr += f'{val:.2f}' if ty == c_float else str(val)
+    return f"({structStr})"
+class PrintableStruct(Structure):
+    _pack_ = 1
+    def __str__(self): return StructToString(self)
+    def __repr__(self): return str(self)
 
 class FName:
     def __init__(self, f:ByteStream, names):
@@ -86,6 +103,21 @@ class FExpressionInput:
             self.mask = asset.f.ReadInt32()
             self.mask_rgba = (asset.f.ReadInt32(),asset.f.ReadInt32(),asset.f.ReadInt32(),asset.f.ReadInt32())
     def __repr__(self) -> str: return f"{self.node}({self.node_output_i}) {self.input_name}(Mask={self.mask}, Mask RGBA={str(self.mask_rgba).replace(' ','')}"
+class FVector(PrintableStruct):
+    _fields_ = ( ('x', c_float), ('y', c_float), ('z', c_float) )
+    def __str__(self): return StructToString(self, False)
+class FQuat(PrintableStruct):
+    _fields_ = ( ('x', c_float), ('y', c_float), ('z', c_float), ('w', c_float) )
+    def __str__(self): return StructToString(self, False)
+class FColor(PrintableStruct): _fields_ = ( ('b', c_ubyte), ('g', c_ubyte), ('r', c_ubyte), ('a', c_ubyte) )
+class FLinearColor(PrintableStruct): _fields_ = ( ('r', c_float), ('g', c_float), ('b', c_float), ('a', c_float) )
+class FBox(PrintableStruct): _fields_ = ( ('min', FVector), ('max', FVector), ('valid', c_ubyte) )
+class FBoxSphereBounds(PrintableStruct): _fields_ = ( ('origin', FVector), ('box_extent', FVector), ('sphere_radius', c_float) )
+class FMeshSectionInfo(PrintableStruct): _fields_ = ( ('material_index', c_int), ('collision', c_bool), ('shadow', c_bool) )
+
+prop_table_types = ( "ExpressionOutput", "StaticMaterial", "KAggregateGeom", "BodyInstance", "KConvexElem", "Transform", "StaticMeshSourceModel", "MeshBuildSettings", "MeshReductionSettings", 
+                    "MeshUVChannelInfo", "AssetEditorOrbitCameraPosition" )
+
 class ArrayDesc:
     def __init__(self, f, b32=True):
         if b32: self.count, self.offset = (f.ReadInt32(), f.ReadInt32())
@@ -144,7 +176,7 @@ class Export: #FObjectExport
         if self.properties: return
         self.properties = Properties()
 
-        if self.export_class_type == "Function" or self.export_class_type.endswith("BlueprintGeneratedClass"):
+        if self.export_class_type in ('Function', 'FbxStaticMeshImportData') or self.export_class_type.endswith("BlueprintGeneratedClass"):
             print(f"Skipping Export \"{self.export_class_type}\"")
             return
         
@@ -162,8 +194,14 @@ class Properties(dict):
     def Read(self, asset:UAsset, header=True, read_children=True):
         while True:
             prop = UProperty()
-            if prop.TryRead(asset, header, read_children): self[prop.name] = prop
+            if prop.TryRead(asset, header, read_children):
+                existing_val = self.get(prop.name)
+                if not existing_val: self[prop.name] = prop
+                else:
+                    if type(existing_val.value) != list: existing_val.value = [existing_val.value]
+                    existing_val.value.append(prop.value)
             else: break
+        return self
     def TryGetValue(self, key:str, default=None):
         property = self.get(key)
         return property.value if property else default
@@ -194,27 +232,27 @@ class UProperty:
                 p = f.Position()
                 match self.struct_type:
                     case "Guid": self.value = f.ReadGuid()
-                    case "Vector" | "Rotator":
-                        if header: self.guid = asset.TryReadPropertyGuid()
-                        self.value = (f.ReadFloat(), f.ReadFloat(), f.ReadFloat())
-                    case "Color":
-                        if header: self.guid = asset.TryReadPropertyGuid()
-                        bgra = f.ReadBytes(4)
-                        self.value = (bgra[2],bgra[1],bgra[0],bgra[3]) # RGBA
-                    case "LinearColor":
-                        if header: self.guid = asset.TryReadPropertyGuid()
-                        self.value = (f.ReadFloat(), f.ReadFloat(), f.ReadFloat(), f.ReadFloat()) # RGBA
+                    case "Vector" | "Rotator": self.value = f.ReadStructure(FVector) #if header: self.guid = asset.TryReadPropertyGuid()
+                    case "Quat": self.value = f.ReadStructure(FQuat)
+                    case "Box": self.value = f.ReadStructure(FBox)
+                    case "Color": self.value = f.ReadStructure(FColor)
+                    case "LinearColor": self.value = f.ReadStructure(FLinearColor)
+                    case "BoxSphereBounds": self.value = f.ReadStructure(FBoxSphereBounds)
                     case "ColorMaterialInput" | "ScalarMaterialInput" | "VectorMaterialInput":
                         p = f.Position()
                         self.value = asset.GetExport(f.ReadInt32())# TODO: other data is default value?
                         f.Seek(p + self.len)
                     case "ExpressionInput": self.value = FExpressionInput(asset)
-                    case "ExpressionOutput": self.value = Properties().Read(asset)
                     case "StreamingTextureBuildInfo": self.value = [x for x in f.ReadBytes(self.len)]
+                    #case "MeshSectionInfoMap":
+                        #self.value = Properties().Read(asset)
                     case _:
-                        self.value = [x for x in f.ReadBytes(self.len)]
-                        if logging: print(f"Uknown Struct Type \"{self.struct_type}\"")
-                        #raise Exception(f"Uknown Struct Type \"{struct_type}\"")
+                        if self.struct_type in prop_table_types:
+                            self.value = Properties().Read(asset)
+                        else:
+                            self.value = [x for x in f.ReadBytes(self.len)]
+                            if logging: print(f"Uknown Struct Type \"{self.struct_type}\"")
+                            #raise Exception(f"Uknown Struct Type \"{struct_type}\"")
                 p_diff = f.Position() - (p + self.len)
                 if p_diff != 0:
                     f.Seek(p)
@@ -222,7 +260,9 @@ class UProperty:
                     if logging: print(f"Length Mismatch! {self.struct_type} : {p_diff}")
                 
                 assert self.len > 0
-            case "ArrayProperty":
+            case "ArrayProperty": # | "MapProperty":
+                #if self.type == "MapProperty": f.ReadBytes(8)
+
                 if header:
                     self.array_type = f.ReadFName(asset.names).str
                     self.guid = asset.TryReadPropertyGuid()
@@ -267,6 +307,13 @@ class UProperty:
                         prop = UProperty()
                         prop.name, prop.type, prop.len = ("", self.array_type, size_2)
                         if prop.TryReadData(asset, False, read_children): self.value.append(prop)
+            case "MapProperty":
+                #if header: self.guid = asset.TryReadPropertyGuid()
+                self.value = [x for x in f.ReadBytes(self.len)]
+                #print("!")
+                if header:
+                    self.key_type = f.ReadFName(asset.names).str
+                    self.value_type = f.ReadFName(asset.names).str
             case "StrProperty":
                 if header: self.guid = asset.TryReadPropertyGuid()
                 self.value = f.ReadFString()
@@ -583,10 +630,14 @@ def LoadUAssetScene(filepath):
             for imp_asset in asset.import_cache.values(): imp_asset.Close()
 
 #asset = UAsset(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Materials\M_Base_Trim.uasset")
-asset = UAsset(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary.umap")
-#asset = UAsset(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Meshes\SM_Door_Small_A.uasset")
-asset.Read()
+#asset = UAsset(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary.umap")
+asset = UAsset(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Meshes\SM_Door_Small_A.uasset")
+asset.Read(False)
 #LoadUAssetScene(filepath)
+
+sm = asset.exports[5]
+sm.ReadProperties()
+bnds = sm.properties['ExtendedBounds']
 
 #asset_path = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\T_Lights_Diff.uasset"
 #subprocess.run((umodel_path, "-export", "-png", asset_path))
