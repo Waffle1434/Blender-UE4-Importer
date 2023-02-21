@@ -4,12 +4,12 @@ from struct import *
 from mathutils import *
 
 #filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\Samples\M_Base_Trim.uasset"
-filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\Samples\MI_Trim_A_Red2.uasset"
-#filepath = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\M_Base_Trim.uasset"
+#filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\Samples\MI_Trim_A_Red2.uasset"
+filepath = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\M_Base_Trim.uasset"
 exported_base_dir = r"F:\Art\Assets"
 project_dir = r"F:\Projects\Unreal Projects\Assets"
-#umodel_path = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\umodel.exe"
-umodel_path = r"F:\Art\Assets\Game\Blender UE4 Importer\umodel.exe"
+umodel_path = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\umodel.exe"
+#umodel_path = r"F:\Art\Assets\Game\Blender UE4 Importer\umodel.exe"
 
 logging = True
 mute_ior = True
@@ -427,7 +427,6 @@ def TryGetExtractedImport(imp:Import, extract_dir):
     extracted = extracted_imports.get(archive_path)
     if not extracted:
         match imp.class_name: # TODO: unify
-            case 'StaticMesh': extension = "gltf"
             case 'Texture2D': extension = "png"
             case _: raise
         extracted_path = os.path.normpath(extract_dir + archive_path + f".{extension}")
@@ -436,8 +435,11 @@ def TryGetExtractedImport(imp:Import, extract_dir):
             extract_dir = os.path.join(extract_dir, "Game")
             subprocess.run(f"\"{umodel_path}\" -export -{extension} -out=\"{extract_dir}\" \"{asset_path}\"")
         match imp.class_name:
-            case 'StaticMesh': raise #bpy.ops.import_scene.gltf(filepath=extracted_path, merge_vertices=True, import_pack_images=False)
-            case 'Texture2D': extracted = bpy.data.images.load(extracted_path, check_existing=True)
+            case 'Texture2D':
+                try: extracted = bpy.data.images.load(extracted_path, check_existing=True)
+                except:
+                    extracted = None
+                    pass
         extracted_imports[archive_path] = extracted
     return extracted
 
@@ -572,7 +574,10 @@ def CreateNode(exp:Export, mat, nodes_data, graph_data, mat_object):
             uv_i = params.TryGetValue('CoordinateIndex')
             if uv_i != None:
                 if mat_object == None: mat_object = bpy.context.object # TODO: less fragile?
-                node.uv_map = mat_object.data.uv_layers.keys()[uv_i]
+                try: node.uv_map = mat_object.data.uv_layers.keys()[uv_i]
+                except:
+                    print(f"Failed to use UV{uv_i} from mesh")
+                    pass
         case 'MaterialExpressionTextureSampleParameter2D':
             tex_imp = params.TryGetValue('Texture')
             if tex_imp:

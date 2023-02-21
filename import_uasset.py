@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, fields
-import bpy, io, uuid, time, math, os, sys, pathlib, subprocess
+import bpy, bmesh, io, uuid, time, math, os, sys, pathlib, subprocess
 from struct import *
 from ctypes import *
 from mathutils import *
@@ -48,6 +48,7 @@ class ByteStream:
         else: return self.ReadBytes(2*count).decode('utf-16',errors='ignore').rstrip('\0')
     
     def ReadBool(self): return self.ReadInt8() == 1
+    def ReadBool32(self): return self.ReadInt32() == 1
 
     def ReadInt8(self) -> int: return unpack('b',self.ReadBytes(1))[0]
     def ReadInt16(self) -> int: return unpack('h',self.ReadBytes(2))[0]
@@ -106,6 +107,11 @@ class FExpressionInput:
 class FVector(PrintableStruct):
     _fields_ = ( ('x', c_float), ('y', c_float), ('z', c_float) )
     def __str__(self): return StructToString(self, False)
+    def ToVector(self): return Vector((self.x, self.y, self.z))
+class FVector2D(PrintableStruct):
+    _fields_ = ( ('x', c_float), ('y', c_float) )
+    def __str__(self): return StructToString(self, False)
+    def ToTuple(self): return (self.x, self.y)
 class FQuat(PrintableStruct):
     _fields_ = ( ('x', c_float), ('y', c_float), ('z', c_float), ('w', c_float) )
     def __str__(self): return StructToString(self, False)
@@ -114,6 +120,7 @@ class FLinearColor(PrintableStruct): _fields_ = ( ('r', c_float), ('g', c_float)
 class FBox(PrintableStruct): _fields_ = ( ('min', FVector), ('max', FVector), ('valid', c_ubyte) )
 class FBoxSphereBounds(PrintableStruct): _fields_ = ( ('origin', FVector), ('box_extent', FVector), ('sphere_radius', c_float) )
 class FMeshSectionInfo(PrintableStruct): _fields_ = ( ('material_index', c_int), ('collision', c_bool), ('shadow', c_bool) )
+class FStripDataFlags(PrintableStruct): _fields_ = ( ('global_strip_flags', c_ubyte), ('class_strip_flags', c_ubyte) )
 
 prop_table_types = ( "ExpressionOutput", "StaticMaterial", "KAggregateGeom", "BodyInstance", "KConvexElem", "Transform", "StaticMeshSourceModel", "MeshBuildSettings", "MeshReductionSettings", 
                     "MeshUVChannelInfo", "AssetEditorOrbitCameraPosition" )
@@ -184,12 +191,121 @@ class Export: #FObjectExport
         self.asset.f.Seek(self.serial_desc.offset)
         self.properties.Read(self.asset, read_children=read_children)
 
+        match self.export_class_type:
+            case 'StaticMesh':
+                if asset.f.ReadInt32(): self.guid = asset.f.ReadGuid()
+                
+                strip_flags = asset.f.ReadStructure(FStripDataFlags) if self.asset.summary.version_ue4 >= 130 else FStripDataFlags()
+                cooked = asset.f.ReadBool32()
+                body_setup = asset.DecodePackageIndex(asset.f.ReadInt32())
+                if self.asset.summary.version_ue4 >= 216: nav_collision = asset.DecodePackageIndex(asset.f.ReadInt32())
+                
+                editor_data_stripped = (strip_flags.global_strip_flags & 1) != 0
+                if not editor_data_stripped:
+                    assert asset.summary.version_ue4 >= 242
+                    highres_source_mesh_name = asset.f.ReadFString()
+                    highres_source_mesh_crc = asset.f.ReadUInt32()
+
+                lighting_guid = asset.f.ReadGuid()
+
+                # TArray<UStaticMeshSocket*> Sockets
+                count = asset.f.ReadInt32()
+                assert count == 0
+
+                obj_guid = uuid.UUID('E4B068ED-42E9-F494-0BDA-31A241BB462E')
+                obj_version = asset.summary.custom_versions[obj_guid]
+                editor = not (asset.summary.package_flags & 0x8)
+
+                if not editor_data_stripped:
+                    for src_model in self.properties['SourceModels'].value:
+                        assert obj_version < 28 # FEditorObjectVersion::StaticMeshDeprecatedRawMesh
+                        # FByteBulkData
+                        flags = asset.f.ReadUInt32()
+                        assert not (flags & 0x2) # BULKDATA_Size64Bit
+                        count = asset.f.ReadUInt32()
+                        byte_size = asset.f.ReadUInt32()
+                        offset = asset.f.ReadInt32() if asset.summary.version_ue4 < 198 else asset.f.ReadInt64()
+                        if not (flags & 0x1): offset += asset.summary.bulk_data_offset # BULKDATA_NoOffsetFixUp
+
+                        assert not (flags & 0x20 or count == 0)
+                        assert not (flags & (0x800|0x100))
+                        if flags & 0x1:
+                            p = asset.f.Position()
+
+                            # FByteBulkData::SerializeData
+                            assert asset.summary.compression_flags == 0
+                            asset.f.Seek(asset.summary.bulk_data_offset + offset)
+                            
+                            # FRawMesh
+                            version, version_licensee = (asset.f.ReadInt32(), asset.f.ReadInt32())
+                            face_mat_indices = asset.f.ReadStructure(c_int32 * asset.f.ReadInt32())
+                            asset.f.Seek(sizeof(c_uint32) * asset.f.ReadInt32(), io.SEEK_CUR)#face_smoothing_mask = asset.f.ReadStructure(c_uint32 * asset.f.ReadInt32())
+                            vertices = asset.f.ReadStructure(FVector * asset.f.ReadInt32())
+                            wedge_indices = asset.f.ReadStructure(c_int32 * asset.f.ReadInt32())
+                            asset.f.Seek(sizeof(FVector) * asset.f.ReadInt32(), io.SEEK_CUR)#wedge_tangents = asset.f.ReadStructure(FVector * asset.f.ReadInt32())
+                            asset.f.Seek(sizeof(FVector) * asset.f.ReadInt32(), io.SEEK_CUR)#wedge_binormals = asset.f.ReadStructure(FVector * asset.f.ReadInt32())
+                            wedge_normals = asset.f.ReadStructure(FVector * asset.f.ReadInt32())
+                            wedge_uvs = []
+                            for i_uv in range(8): wedge_uvs.append(asset.f.ReadStructure(FVector2D * asset.f.ReadInt32()))
+                            wedge_colors = asset.f.ReadStructure(FColor * asset.f.ReadInt32())
+                            if version >= 1: mat_index_to_import_index = asset.f.ReadStructure(c_int32 * asset.f.ReadInt32())
+
+                            mdl_bm = bmesh.new()
+                            for pos in vertices: mdl_bm.verts.new(pos.ToVector())
+                            mdl_bm.verts.ensure_lookup_table()
+                            
+                            uvs = []
+                            for i_uv in range(len(wedge_uvs)):
+                                if len(wedge_uvs[i_uv]) > 0: uvs.append(mdl_bm.loops.layers.uv.new(f"UV{i_uv}"))
+                            
+                            if len(wedge_colors) > 0:
+                                mdl_bm.loops.layers.color.new("Color") # data.color_attributes?
+                                assert False
+
+                            spl_norms = []
+                            for i_wedge in range(2, len(wedge_indices), 3):
+                                face = mdl_bm.faces.new((
+                                    mdl_bm.verts[wedge_indices[i_wedge]],
+                                    mdl_bm.verts[wedge_indices[i_wedge-1]],
+                                    mdl_bm.verts[wedge_indices[i_wedge-2]]
+                                ))
+                                face.material_index = face_mat_indices[int(i_wedge / 3)]
+                                for i_loop in range(3): spl_norms.append(wedge_normals[i_wedge - i_loop].ToVector())
+                                for i_uv in range(len(uvs)):
+                                    uv_lay = uvs[i_uv]
+                                    w_uvs = wedge_uvs[i_uv]
+                                    for i_loop in range(3): face.loops[i_loop][uv_lay].uv = w_uvs[i_wedge - i_loop].ToTuple()
+                            
+                            mesh = bpy.data.meshes.new(self.object_name.str)
+                            mdl_bm.to_mesh(mesh)
+                            mesh.normals_split_custom_set(spl_norms)
+                            mesh.use_auto_smooth = True
+                            # TODO: flip_normals() faster?
+
+                            asset.f.Seek(p)
+                        guid, is_hash = (asset.f.ReadGuid(), asset.f.ReadBool32())
+
+                assert not cooked
+
+                speedtree_wind = asset.f.ReadBool32()
+                assert not speedtree_wind
+
+                if obj_version >= 8:
+                    # TArray<FStaticMaterial> StaticMaterials
+                    count = asset.f.ReadInt32()
+                    for i in range(count):
+                        mat_interface, mat_slot_name = (asset.DecodePackageIndex(asset.f.ReadInt32()), asset.f.ReadFName(asset.names))
+                        if editor: imported_mat_slot_name = asset.f.ReadFName(asset.names)
+                        if obj_version >= 10:
+                            initialized, override_densities = (asset.f.ReadBool32(), asset.f.ReadBool32())
+                            local_uv_densities = (asset.f.ReadFloat(), asset.f.ReadFloat(), asset.f.ReadFloat(), asset.f.ReadFloat())
+                
+                # remaining is SpeedTree
+
         #match export_class_type: case "Enum" | "UserDefinedEnum": export.enum = # TODO: post "normal export" data
         extras_len = (self.serial_desc.offset + self.serial_desc.count) - self.asset.f.Position()
         assert extras_len >= 0
         self.extras = [x for x in self.asset.f.ReadBytes(extras_len)] if extras_len > 0 else None
-        #match self.export_class_type:
-            #case "ObjectProperty": # [0, i_exp(self), 1, 4, 4, 196, 0]
 class Properties(dict):
     def Read(self, asset:UAsset, header=True, read_children=True):
         while True:
@@ -384,10 +500,10 @@ class USummary:
         self.version_ue4 = version_ue4 = f.ReadInt32()
         self.version_ue4_licensee = f.ReadInt32()
         if self.version_legacy < -2:
+            self.custom_versions = {}
             for i in range(f.ReadInt32()):
-                self.custom_version_guid = f.ReadGuid()
-                self.custom_version = f.ReadInt32()
-        
+                guid, version = (f.ReadGuid(), f.ReadInt32())
+                self.custom_versions[guid] = version
         self.header_size = f.ReadInt32()
         self.folder_name = f.ReadFString()
         self.package_flags = f.ReadUInt32()
@@ -632,12 +748,12 @@ def LoadUAssetScene(filepath):
 #asset = UAsset(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Materials\M_Base_Trim.uasset")
 #asset = UAsset(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary.umap")
 asset = UAsset(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Meshes\SM_Door_Small_A.uasset")
+#asset = UAsset(r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\SM_Door_Small_A.uasset")
 asset.Read(False)
 #LoadUAssetScene(filepath)
 
 sm = asset.exports[5]
 sm.ReadProperties()
-bnds = sm.properties['ExtendedBounds']
 
 #asset_path = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\T_Lights_Diff.uasset"
 #subprocess.run((umodel_path, "-export", "-png", asset_path))
