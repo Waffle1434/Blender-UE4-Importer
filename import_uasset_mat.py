@@ -5,7 +5,7 @@ from mathutils import *
 
 #filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\Samples\M_Base_Trim.uasset"
 #filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\Samples\MI_Trim_A_Red2.uasset"
-filepath = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\M_Base_Trim.uasset"
+#filepath = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\M_Base_Trim.uasset"
 exported_base_dir = r"F:\Art\Assets"
 project_dir = r"F:\Projects\Unreal Projects\Assets"
 umodel_path = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\umodel.exe"
@@ -19,6 +19,14 @@ exported_base_dir = os.path.normpath(exported_base_dir)
 project_dir = os.path.normpath(project_dir)
 extract_dir = os.path.join(project_dir, "Export")
 extracted_imports = {}
+
+cur_dir = pathlib.Path(os.path.dirname(__file__))
+filepath = cur_dir / "UE_nodes.blend"
+node_tree_path = filepath / "NodeTree"
+
+with bpy.data.libraries.load(str(filepath)) as (data_from, data_to):
+    for node_group in data_from.node_groups:
+        bpy.ops.wm.link(filepath=str(node_tree_path / node_group), directory=str(node_tree_path), filename=node_group)
 
 class ByteStream:
     def __init__(self, byte_stream:io.BufferedReader): self.byte_stream = byte_stream
@@ -711,5 +719,5 @@ def ImportUMaterial(filepath, mat_name=None, mat_object=None): # TODO: return as
     return (mat, graph_data)
 
 for mat in bpy.data.materials: bpy.data.materials.remove(mat)
-ImportUMaterial(filepath)
+ImportUMaterial(r"F:\Art\Assets\Game\Blender UE4 Importer\Samples\MI_Trim_A_Red2.uasset")
 print("Done")

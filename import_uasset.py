@@ -1,30 +1,23 @@
 from __future__ import annotations
 from dataclasses import dataclass, fields
-import bpy, bmesh, io, uuid, time, math, os, sys, pathlib, subprocess
+import bpy, bmesh, io, uuid, time, math, os
 from struct import *
 from ctypes import *
 from mathutils import *
-#from . import import_t3d
-
-#dir = os.path.dirname(__file__)
-#if dir not in sys.path: sys.path.append(dir)
-#import import_t3d
 
 #filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\Samples\M_Base_Trim.uasset"
 #filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\Samples\Example_Stationary.umap"
 #filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\Samples\Example_Stationary_Test.umap"
 #filepath = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\M_Base_Trim.uasset"
-filepath = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\Example_Stationary.umap"
+#filepath = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\Example_Stationary.umap"
 exported_base_dir = r"F:\Art\Assets"
 project_dir = r"F:\Projects\Unreal Projects\Assets"
 umodel_path = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\umodel.exe"
 
 logging = True
-hide_noncasting = False
 
 exported_base_dir = os.path.normpath(exported_base_dir)
 project_dir = os.path.normpath(project_dir)
-deg2rad = math.radians(1)
 
 class ByteStream:
     def __init__(self, byte_stream:io.BufferedReader): self.byte_stream = byte_stream
@@ -187,29 +180,32 @@ class Export: #FObjectExport
             print(f"Skipping Export \"{self.export_class_type}\"")
             return
         
-        #self.asset.f.EnsureOpen()
-        self.asset.f.Seek(self.serial_desc.offset)
-        self.properties.Read(self.asset, read_children=read_children)
+        
+        asset = self.asset
+        f = asset.f
+        #f.EnsureOpen()
+        f.Seek(self.serial_desc.offset)
+        self.properties.Read(asset, read_children=read_children)
 
         match self.export_class_type:
             case 'StaticMesh':
-                if asset.f.ReadInt32(): self.guid = asset.f.ReadGuid()
+                if f.ReadInt32(): self.guid = f.ReadGuid()
                 
-                strip_flags = asset.f.ReadStructure(FStripDataFlags) if self.asset.summary.version_ue4 >= 130 else FStripDataFlags()
-                cooked = asset.f.ReadBool32()
-                body_setup = asset.DecodePackageIndex(asset.f.ReadInt32())
-                if self.asset.summary.version_ue4 >= 216: nav_collision = asset.DecodePackageIndex(asset.f.ReadInt32())
+                strip_flags = f.ReadStructure(FStripDataFlags) if asset.summary.version_ue4 >= 130 else FStripDataFlags()
+                cooked = f.ReadBool32()
+                body_setup = asset.DecodePackageIndex(f.ReadInt32())
+                if asset.summary.version_ue4 >= 216: nav_collision = asset.DecodePackageIndex(f.ReadInt32())
                 
                 editor_data_stripped = (strip_flags.global_strip_flags & 1) != 0
                 if not editor_data_stripped:
                     assert asset.summary.version_ue4 >= 242
-                    highres_source_mesh_name = asset.f.ReadFString()
-                    highres_source_mesh_crc = asset.f.ReadUInt32()
+                    highres_source_mesh_name = f.ReadFString()
+                    highres_source_mesh_crc = f.ReadUInt32()
 
-                lighting_guid = asset.f.ReadGuid()
+                lighting_guid = f.ReadGuid()
 
                 # TArray<UStaticMeshSocket*> Sockets
-                count = asset.f.ReadInt32()
+                count = f.ReadInt32()
                 assert count == 0
 
                 obj_guid = uuid.UUID('E4B068ED-42E9-F494-0BDA-31A241BB462E')
@@ -220,35 +216,35 @@ class Export: #FObjectExport
                     for src_model in self.properties['SourceModels'].value:
                         assert obj_version < 28 # FEditorObjectVersion::StaticMeshDeprecatedRawMesh
                         # FByteBulkData
-                        flags = asset.f.ReadUInt32()
+                        flags = f.ReadUInt32()
                         assert not (flags & 0x2) # BULKDATA_Size64Bit
-                        count = asset.f.ReadUInt32()
-                        byte_size = asset.f.ReadUInt32()
-                        offset = asset.f.ReadInt32() if asset.summary.version_ue4 < 198 else asset.f.ReadInt64()
+                        count = f.ReadUInt32()
+                        byte_size = f.ReadUInt32()
+                        offset = f.ReadInt32() if asset.summary.version_ue4 < 198 else f.ReadInt64()
                         if not (flags & 0x1): offset += asset.summary.bulk_data_offset # BULKDATA_NoOffsetFixUp
 
                         assert not (flags & 0x20 or count == 0)
                         assert not (flags & (0x800|0x100))
                         if flags & 0x1:
-                            p = asset.f.Position()
+                            p = f.Position()
 
                             # FByteBulkData::SerializeData
                             assert asset.summary.compression_flags == 0
-                            asset.f.Seek(asset.summary.bulk_data_offset + offset)
+                            f.Seek(asset.summary.bulk_data_offset + offset)
                             
                             # FRawMesh
-                            version, version_licensee = (asset.f.ReadInt32(), asset.f.ReadInt32())
-                            face_mat_indices = asset.f.ReadStructure(c_int32 * asset.f.ReadInt32())
-                            asset.f.Seek(sizeof(c_uint32) * asset.f.ReadInt32(), io.SEEK_CUR)#face_smoothing_mask = asset.f.ReadStructure(c_uint32 * asset.f.ReadInt32())
-                            vertices = asset.f.ReadStructure(FVector * asset.f.ReadInt32())
-                            wedge_indices = asset.f.ReadStructure(c_int32 * asset.f.ReadInt32())
-                            asset.f.Seek(sizeof(FVector) * asset.f.ReadInt32(), io.SEEK_CUR)#wedge_tangents = asset.f.ReadStructure(FVector * asset.f.ReadInt32())
-                            asset.f.Seek(sizeof(FVector) * asset.f.ReadInt32(), io.SEEK_CUR)#wedge_binormals = asset.f.ReadStructure(FVector * asset.f.ReadInt32())
-                            wedge_normals = asset.f.ReadStructure(FVector * asset.f.ReadInt32())
+                            version, version_licensee = (f.ReadInt32(), f.ReadInt32())
+                            face_mat_indices = f.ReadStructure(c_int32 * f.ReadInt32())
+                            f.Seek(sizeof(c_uint32) * f.ReadInt32(), io.SEEK_CUR)#face_smoothing_mask = asset.f.ReadStructure(c_uint32 * asset.f.ReadInt32())
+                            vertices = f.ReadStructure(FVector * f.ReadInt32())
+                            wedge_indices = f.ReadStructure(c_int32 * f.ReadInt32())
+                            f.Seek(sizeof(FVector) * f.ReadInt32(), io.SEEK_CUR)#wedge_tangents = asset.f.ReadStructure(FVector * asset.f.ReadInt32())
+                            f.Seek(sizeof(FVector) * f.ReadInt32(), io.SEEK_CUR)#wedge_binormals = asset.f.ReadStructure(FVector * asset.f.ReadInt32())
+                            wedge_normals = f.ReadStructure(FVector * f.ReadInt32())
                             wedge_uvs = []
-                            for i_uv in range(8): wedge_uvs.append(asset.f.ReadStructure(FVector2D * asset.f.ReadInt32()))
-                            wedge_colors = asset.f.ReadStructure(FColor * asset.f.ReadInt32())
-                            if version >= 1: mat_index_to_import_index = asset.f.ReadStructure(c_int32 * asset.f.ReadInt32())
+                            for i_uv in range(8): wedge_uvs.append(f.ReadStructure(FVector2D * f.ReadInt32()))
+                            wedge_colors = f.ReadStructure(FColor * f.ReadInt32())
+                            if version >= 1: mat_index_to_import_index = f.ReadStructure(c_int32 * f.ReadInt32())
 
                             mdl_bm = bmesh.new()
                             for pos in vertices: mdl_bm.verts.new(pos.ToVector())
@@ -282,23 +278,22 @@ class Export: #FObjectExport
                             mesh.use_auto_smooth = True
                             # TODO: flip_normals() faster?
 
-                            asset.f.Seek(p)
-                        guid, is_hash = (asset.f.ReadGuid(), asset.f.ReadBool32())
+                            f.Seek(p)
+                        guid, is_hash = (f.ReadGuid(), f.ReadBool32())
 
                 assert not cooked
-
-                speedtree_wind = asset.f.ReadBool32()
+                speedtree_wind = f.ReadBool32()
                 assert not speedtree_wind
 
                 if obj_version >= 8:
                     # TArray<FStaticMaterial> StaticMaterials
-                    count = asset.f.ReadInt32()
+                    count = f.ReadInt32()
                     for i in range(count):
-                        mat_interface, mat_slot_name = (asset.DecodePackageIndex(asset.f.ReadInt32()), asset.f.ReadFName(asset.names))
-                        if editor: imported_mat_slot_name = asset.f.ReadFName(asset.names)
+                        mat_interface, mat_slot_name = (asset.DecodePackageIndex(f.ReadInt32()), f.ReadFName(asset.names))
+                        if editor: imported_mat_slot_name = f.ReadFName(asset.names)
                         if obj_version >= 10:
-                            initialized, override_densities = (asset.f.ReadBool32(), asset.f.ReadBool32())
-                            local_uv_densities = (asset.f.ReadFloat(), asset.f.ReadFloat(), asset.f.ReadFloat(), asset.f.ReadFloat())
+                            initialized, override_densities = (f.ReadBool32(), f.ReadBool32())
+                            local_uv_densities = (f.ReadFloat(), f.ReadFloat(), f.ReadFloat(), f.ReadFloat())
                 
                 # remaining is SpeedTree
 
@@ -585,178 +580,20 @@ class UAsset:
         return self
     def __exit__(self, *args): self.Close()
 
-def ImportUnrealFbx(filepath, collider_mode='NONE'):
-    objs_1 = set(bpy.context.collection.objects)
-    bpy.ops.import_scene.fbx(filepath=filepath, use_image_search=False)
-    imported_objs = []
-    for object in set(bpy.context.collection.objects) - objs_1:
-        if object.name.startswith("UCX_"): # Collision
-            if collider_mode == 'NONE':
-                bpy.data.objects.remove(object)
-                continue
-            object.display_type = 'WIRE'
-            object.hide_render = True
-            object.visible_camera = object.visible_diffuse = object.visible_glossy = object.visible_transmission = object.visible_volume_scatter = object.visible_shadow = False
-            object.select_set(False)
-            object.hide_set(collider_mode == 'HIDE')
-        else: imported_objs.append(object)
-    return imported_objs
 
-def ArchiveToProjectPath(path): return os.path.join(project_dir, "Content", str(pathlib.Path(path).relative_to("\\Game"))) + ".uasset"
-def SetupObject(context, name, data=None):
-    obj = bpy.data.objects.new(name, data)
-    obj.rotation_mode = 'YXZ'
-    context.collection.objects.link(obj)
-    return obj
-def Transform(export:Export, obj, pitch_offset=0):
-    props = export.properties
+if __name__ != "import_uasset":
+    #asset = UAsset(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Materials\M_Base_Trim.uasset")
+    #asset = UAsset(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary.umap")
+    #asset = UAsset(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Meshes\SM_Door_Small_A.uasset")
+    #asset = UAsset(r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\SM_Door_Small_A.uasset")
+    #asset.Read(False)
+    #LoadUAssetScene(filepath)
 
-    # Unreal: X+ Forward, Y+ Right, Z+ Up     Blender: X+ Right, Y+ Forward, Z+ Up
-    rel_loc = props.TryGetValue('RelativeLocation')
-    if rel_loc: obj.location = Vector((rel_loc[1],rel_loc[0],rel_loc[2])) * 0.01
-    
-    # Unreal: Roll, Pitch, Yaw     File: Pitch, Yaw, Roll     Blender: Pitch, Roll, -Yaw     0,0,0 = fwd, down for lights
-    rel_rot = props.TryGetValue('RelativeRotation')
-    if rel_rot: obj.rotation_euler = Euler(((rel_rot[0]+pitch_offset)*deg2rad, rel_rot[2]*deg2rad, -rel_rot[1]*deg2rad))
+    #sm = asset.exports[5]
+    #sm.ReadProperties()
 
-    rel_scale = props.TryGetValue('RelativeScale3D')
-    if rel_scale: obj.scale = Vector((rel_scale[1],rel_scale[0],rel_scale[2]))
-def TryApplyRootComponent(export:Export, obj, pitch_offset=0):
-    root_exp = export.properties.TryGetValue('RootComponent')
-    if root_exp:
-        Transform(root_exp, obj, pitch_offset)
-        return True
-    return False
-def TryGetExtractedImport(imp:Import, extract_dir):
-    archive_path = imp.object_name.str
-    extracted_imports = {}
-    extracted = extracted_imports.get(archive_path)
-    if not extracted:
-        asset_path = ArchiveToProjectPath(archive_path)
-        extracted_path = extract_dir+archive_path
-        match type:
-            case 'StaticMesh':
-                subprocess.run(f"\"{umodel_path}\" -export -gltf -out=\"{extract_dir}\" \"{asset_path}\"")
-                #bpy.ops.import_scene.gltf(filepath=extracted_path, merge_vertices=True, import_pack_images=False)
-            case 'Texture':
-                subprocess.run(f"\"{umodel_path}\" -export -png -out=\"{extract_dir}\" \"{asset_path}\"")
-                #bpy.data.images.load(extracted_path, check_existing=True)
-            case _: raise
-        raise
-        extracted_imports[archive_path] = extracted
-    return extracted
-def TryGetStaticMesh(static_mesh_comp:Export):
-    mesh = None
-    static_mesh = static_mesh_comp.properties.TryGetValue('StaticMesh')
-    if static_mesh:
-        mesh_name = static_mesh.object_name.str
-        mesh = bpy.data.meshes.get(mesh_name)
-        if not mesh:
-            mesh_import = static_mesh.import_ref
-            if mesh_import:
-                mesh_path = os.path.normpath(f"{exported_base_dir}{mesh_import.object_name.str}.FBX")
-                return mesh
-                mesh = ImportUnrealFbx(mesh_path)[0].data
-                mesh.name = mesh_name
-                mesh.transform(Euler((0,0,90*deg2rad)).to_matrix().to_4x4()*0.01)
-    return mesh
-def ProcessSceneExport(export:Export):
-    match export.export_class_type:
-        case 'PointLight' | 'SpotLight':
-            export.ReadProperties()
+    #asset_path = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\T_Lights_Diff.uasset"
+    #subprocess.run((umodel_path, "-export", "-png", asset_path))
+    #subprocess.run(f"\"{umodel_path}\" -export -png \"{asset_path}\"")
 
-            match export.export_class_type:
-                case 'PointLight': light_type = 'POINT'
-                case 'SpotLight': light_type = 'SPOT'
-                case _: raise # TODO: Sun Light
-
-            light = bpy.data.lights.new(export.object_name.str, light_type)
-            light_obj = SetupObject(bpy.context, light.name, light)
-            TryApplyRootComponent(export, light_obj, -90) # Blender lights are cursed, local Z- Forward, Y+ Up, X+ Right
-            
-            light_comp = export.properties.TryGetValue('LightComponent')
-            if light_comp:
-                light_props = light_comp.properties
-                light.energy = light_props.TryGetValue('Intensity')
-                color = light_props.TryGetValue('LightColor')
-                if color: light.color = Color(color[:3]) / 255.0
-                cast = light_props.TryGetValue('CastShadows')
-                if cast != None:
-                    light.use_shadow = cast
-                    if not cast and hide_noncasting: light_obj.hide_viewport = light_obj.hide_render = True
-                light.shadow_soft_size = light_props.TryGetValue('SourceRadius', 0.05)
-
-                if light_type == 'SPOT':
-                    outer_angle = light_props.TryGetValue('OuterConeAngle')
-                    inner_angle = light_props.TryGetValue('InnerConeAngle', 0)
-                    light.spot_size = outer_angle * deg2rad
-                    light.spot_blend = 1 - (inner_angle / outer_angle)
-        case 'StaticMeshActor':
-            export.ReadProperties()
-
-            static_mesh_comp = export.properties.TryGetValue('StaticMeshComponent')
-            if static_mesh_comp: mesh = TryGetStaticMesh(static_mesh_comp)
-            
-            obj = SetupObject(bpy.context, export.object_name.str, mesh)
-            TryApplyRootComponent(export, obj)
-        case _:
-            if export.export_class.class_name == 'BlueprintGeneratedClass':
-                export.ReadProperties()
-
-                bp_obj = SetupObject(bpy.context, export.object_name.str)
-                TryApplyRootComponent(export, bp_obj)
-                root_comp = export.properties.TryGetValue('RootComponent')
-                root_comp.bl_obj = bp_obj
-
-                bp_comps = export.properties.TryGetValue('BlueprintCreatedComponents')
-                if bp_comps:
-                    if not hasattr(export.asset, 'import_cache'): export.asset.import_cache = {}
-
-                    bp_path = export.export_class.import_ref.object_name.str
-                    bp_asset = export.asset.import_cache.get(bp_path)
-                    if not bp_asset:
-                        export.asset.import_cache[bp_path] = bp_asset = UAsset(ArchiveToProjectPath(bp_path))
-                        bp_asset.Read(False)
-                        bp_asset.name2exp = {}
-                        for exp in bp_asset.exports: bp_asset.name2exp[exp.object_name.str] = exp
-                    
-                    for comp in bp_comps:
-                        child_export = comp.value
-                        #ProcessSceneExport(child_export) # TODO? Can't, need to partly process gend_exp & child_export
-                        if child_export.export_class_type == 'StaticMeshComponent':
-                            gend_exp = bp_asset.name2exp.get(f"{child_export.object_name.str}_GEN_VARIABLE")
-                            if gend_exp:
-                                gend_exp.ReadProperties()
-
-                                mesh = TryGetStaticMesh(gend_exp)
-                                child_export.bl_obj = obj = SetupObject(bpy.context, child_export.object_name.str, mesh)
-
-                                attach = child_export.properties.TryGetValue('AttachParent') # TODO: unify?
-                                if attach:
-                                    assert hasattr(attach, 'bl_obj')
-                                    obj.parent = attach.bl_obj
-
-                                Transform(gend_exp, obj)
-                return
-def LoadUAssetScene(filepath):
-    with UAsset(filepath) as asset:
-        for export in asset.exports:
-            ProcessSceneExport(export)
-        if hasattr(asset, 'import_cache'):
-            for imp_asset in asset.import_cache.values(): imp_asset.Close()
-
-#asset = UAsset(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Materials\M_Base_Trim.uasset")
-#asset = UAsset(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary.umap")
-asset = UAsset(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Meshes\SM_Door_Small_A.uasset")
-#asset = UAsset(r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\SM_Door_Small_A.uasset")
-asset.Read(False)
-#LoadUAssetScene(filepath)
-
-sm = asset.exports[5]
-sm.ReadProperties()
-
-#asset_path = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\T_Lights_Diff.uasset"
-#subprocess.run((umodel_path, "-export", "-png", asset_path))
-#subprocess.run(f"\"{umodel_path}\" -export -png \"{asset_path}\"")
-
-print("Done")
+    print("Done")
