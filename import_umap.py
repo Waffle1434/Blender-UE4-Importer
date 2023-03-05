@@ -4,7 +4,7 @@ from mathutils import *
 cur_dir = os.path.dirname(__file__)
 if cur_dir not in sys.path: sys.path.append(cur_dir)
 import import_uasset
-from import_uasset import UAsset, Import, Export, Vector, Euler, project_dir, exported_base_dir, umodel_path
+from import_uasset import UAsset, Import, Export, Vector, Euler, project_dir
 
 hide_noncasting = False
 deg2rad = math.radians(1)
@@ -51,24 +51,6 @@ def TryApplyRootComponent(export:Export, obj, pitch_offset=0):
         Transform(root_exp, obj, pitch_offset)
         return True
     return False
-def TryGetExtractedImport(imp:Import, extract_dir):
-    archive_path = imp.object_name.str
-    extracted_imports = {}
-    extracted = extracted_imports.get(archive_path)
-    if not extracted:
-        asset_path = ArchiveToProjectPath(archive_path)
-        extracted_path = extract_dir+archive_path
-        match type:
-            case 'StaticMesh':
-                subprocess.run(f"\"{umodel_path}\" -export -gltf -out=\"{extract_dir}\" \"{asset_path}\"")
-                #bpy.ops.import_scene.gltf(filepath=extracted_path, merge_vertices=True, import_pack_images=False)
-            case 'Texture':
-                subprocess.run(f"\"{umodel_path}\" -export -png -out=\"{extract_dir}\" \"{asset_path}\"")
-                #bpy.data.images.load(extracted_path, check_existing=True)
-            case _: raise
-        raise
-        extracted_imports[archive_path] = extracted
-    return extracted
 def TryGetStaticMesh(static_mesh_comp:Export):
     mesh = None
     static_mesh = static_mesh_comp.properties.TryGetValue('StaticMesh')
@@ -78,11 +60,7 @@ def TryGetStaticMesh(static_mesh_comp:Export):
         if not mesh:
             mesh_import = static_mesh.import_ref
             if mesh_import:
-                mesh_path = os.path.normpath(f"{exported_base_dir}{mesh_import.object_name.str}.FBX")
                 return mesh
-                mesh = ImportUnrealFbx(mesh_path)[0].data
-                mesh.name = mesh_name
-                mesh.transform(Euler((0,0,90*deg2rad)).to_matrix().to_4x4()*0.01)
     return mesh
 def ProcessSceneExport(export:Export, import_meshes=True):
     match export.export_class_type:

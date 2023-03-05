@@ -8,7 +8,6 @@ if cur_dir not in sys.path: sys.path.append(cur_dir)
 import import_uasset
 from import_uasset import UAsset, Import, Export, Properties
 
-exported_base_dir = r"F:\Art\Assets"
 project_dir = r"F:\Projects\Unreal Projects\Assets"
 umodel_path = cur_dir + r"\umodel.exe"
 
@@ -16,7 +15,6 @@ logging = True
 mute_ior = True
 mute_fresnel = True
 
-exported_base_dir = os.path.normpath(exported_base_dir)
 project_dir = os.path.normpath(project_dir)
 extract_dir = os.path.join(project_dir, "Export")
 extracted_imports = {}

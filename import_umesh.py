@@ -7,7 +7,7 @@ import import_uasset, import_umat
 from import_uasset import UAsset, Export, FStripDataFlags, FVector, FVector2D, FColor, Euler
 from import_umat import ArchiveToProjectPath, ImportUMaterial
 
-def ImportStaticMesh(self: Export):
+def ImportStaticMesh(self: Export, import_materials=True):
     asset = self.asset
     f = self.asset.f
     
@@ -121,10 +121,11 @@ def ImportStaticMesh(self: Export):
                 initialized, override_densities = (f.ReadBool32(), f.ReadBool32())
                 local_uv_densities = (f.ReadFloat(), f.ReadFloat(), f.ReadFloat(), f.ReadFloat())
             
-            umat_imp = mat_interface.import_ref.object_name.str
-            umat_path = ArchiveToProjectPath(umat_imp)
-            mat, graph_data = ImportUMaterial(umat_path, mat_mesh=mesh)
-            mesh.materials.append(mat)
+            if import_materials:
+                umat_imp = mat_interface.import_ref.object_name.str
+                umat_path = ArchiveToProjectPath(umat_imp)
+                mat, graph_data = ImportUMaterial(umat_path, mat_mesh=mesh)
+                mesh.materials.append(mat)
     
     # remaining is SpeedTree
     return mesh

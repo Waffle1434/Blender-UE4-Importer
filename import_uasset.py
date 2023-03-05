@@ -5,18 +5,9 @@ from struct import *
 from ctypes import *
 from mathutils import *
 
-#filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\Samples\M_Base_Trim.uasset"
-#filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\Samples\Example_Stationary.umap"
-#filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\Samples\Example_Stationary_Test.umap"
-#filepath = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\M_Base_Trim.uasset"
-#filepath = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\Example_Stationary.umap"
-exported_base_dir = r"F:\Art\Assets"
 project_dir = r"F:\Projects\Unreal Projects\Assets"
-umodel_path = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\umodel.exe"
-
 logging = True
 
-exported_base_dir = os.path.normpath(exported_base_dir)
 project_dir = os.path.normpath(project_dir)
 
 class ByteStream:
@@ -481,9 +472,5 @@ if __name__ != "import_uasset":
 
     #sm = asset.exports[5]
     #sm.ReadProperties()
-
-    #asset_path = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\T_Lights_Diff.uasset"
-    #subprocess.run((umodel_path, "-export", "-png", asset_path))
-    #subprocess.run(f"\"{umodel_path}\" -export -png \"{asset_path}\"")
 
     print("Done")
