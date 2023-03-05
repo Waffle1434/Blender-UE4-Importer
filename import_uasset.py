@@ -109,14 +109,16 @@ class FQuat(PrintableStruct):
     _fields_ = ( ('x', c_float), ('y', c_float), ('z', c_float), ('w', c_float) )
     def __str__(self): return StructToString(self, False)
 class FColor(PrintableStruct): _fields_ = ( ('b', c_ubyte), ('g', c_ubyte), ('r', c_ubyte), ('a', c_ubyte) )
-class FLinearColor(PrintableStruct): _fields_ = ( ('r', c_float), ('g', c_float), ('b', c_float), ('a', c_float) )
+class FLinearColor(PrintableStruct):
+    _fields_ = ( ('r', c_float), ('g', c_float), ('b', c_float), ('a', c_float) )
+    def ToTuple(self): return (self.r, self.g, self.b, self.a)
 class FBox(PrintableStruct): _fields_ = ( ('min', FVector), ('max', FVector), ('valid', c_ubyte) )
 class FBoxSphereBounds(PrintableStruct): _fields_ = ( ('origin', FVector), ('box_extent', FVector), ('sphere_radius', c_float) )
 class FMeshSectionInfo(PrintableStruct): _fields_ = ( ('material_index', c_int), ('collision', c_bool), ('shadow', c_bool) )
 class FStripDataFlags(PrintableStruct): _fields_ = ( ('global_strip_flags', c_ubyte), ('class_strip_flags', c_ubyte) )
 
-prop_table_types = ( "ExpressionOutput", "StaticMaterial", "KAggregateGeom", "BodyInstance", "KConvexElem", "Transform", "StaticMeshSourceModel", "MeshBuildSettings", "MeshReductionSettings", 
-                    "MeshUVChannelInfo", "AssetEditorOrbitCameraPosition" )
+prop_table_types = ( "ExpressionOutput", "ScalarParameterValue", "TextureParameterValue", "VectorParameterValue", "StaticMaterial", "KAggregateGeom", "BodyInstance", 
+                    "KConvexElem", "Transform", "StaticMeshSourceModel", "MeshBuildSettings", "MeshReductionSettings", "MeshUVChannelInfo", "AssetEditorOrbitCameraPosition" )
 
 class ArrayDesc:
     def __init__(self, f, b32=True):
@@ -537,7 +539,9 @@ class USummary:
         elif version_ue4 >= 278: chunk_id = f.ReadInt32()
         if version_ue4 >= 507: self.preload_depends_desc = ArrayDesc(f)
 class UAsset:
-    def __init__(self, filepath): self.filepath = filepath
+    def __init__(self, filepath, read_all=False):
+        self.filepath = filepath
+        self.read_all = read_all
     def __repr__(self) -> str: return f"\"{self.f.byte_stream.name}\", {len(self.imports)} Imports, {len(self.exports)} Exports"
     def GetImport(self, i) -> Import: return self.imports[-i - 1]
     def GetExport(self, i) -> Export: return self.exports[i - 1]
@@ -570,13 +574,12 @@ class UAsset:
             for i in range(summary.exports_desc.count): self.exports.append(Export(self))
 
         if read_all and summary.header_size > 0 and summary.exports_desc.count > 0:
-            for i in range(summary.exports_desc.count):
-                self.exports[i].ReadProperties(not read_all)
+            for export in self.exports: export.ReadProperties(False)
             self.f.byte_stream.close()
             print(f"Imported {self} in {time.time() - t0:.2f}s")
     def Close(self): self.f.byte_stream.close()
     def __enter__(self):
-        self.Read(False)
+        self.Read(self.read_all)
         return self
     def __exit__(self, *args): self.Close()
 
