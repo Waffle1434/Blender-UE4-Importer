@@ -4,10 +4,12 @@ from ctypes import *
 cur_dir = os.path.dirname(__file__)
 if cur_dir not in sys.path: sys.path.append(cur_dir)
 import import_uasset, import_umat
-from import_uasset import UAsset, Export, FStripDataFlags, FVector, FVector2D, FColor, Euler
-from import_umat import ArchiveToProjectPath, ImportUMaterial
+from import_uasset import UAsset, Export, FStripDataFlags, FVector, FVector2D, FColor, Euler, ArchiveToProjectPath
+from import_umat import ImportUMaterial
 
-def ImportStaticMesh(self: Export, import_materials=True):
+def ImportStaticMesh(self:Export, import_materials=True):
+    self.ReadProperties(False, False)
+
     asset = self.asset
     f = self.asset.f
     
@@ -101,7 +103,7 @@ def ImportStaticMesh(self: Export, import_materials=True):
                 mesh.normals_split_custom_set(spl_norms)
                 mesh.use_auto_smooth = True
                 mesh.transform(Euler((0,0,math.radians(90))).to_matrix().to_4x4()*0.01)
-                #mesh.transform(Euler((0,0,0)).to_matrix().to_4x4()*0.01)
+                mesh["UAsset"] = self.asset.f.byte_stream.name
                 # TODO: flip_normals() faster?
 
                 f.Seek(p)
@@ -129,17 +131,18 @@ def ImportStaticMesh(self: Export, import_materials=True):
     
     # remaining is SpeedTree
     return mesh
+def ImportStaticMeshUAsset(filepath:str, import_materials=True):
+    asset = UAsset(filepath)
+    asset.Read(False)
+    for export in asset.exports:
+        match export.export_class_type:
+            case 'StaticMesh': return ImportStaticMesh(export, import_materials)
+    return None
 
 if __name__ != "import_umesh":
     importlib.reload(import_uasset)
     importlib.reload(import_umat)
 
-    asset = UAsset(cur_dir + r"\Samples\SM_Door_Small_A.uasset")
-    asset.Read(False)
-    for export in asset.exports:
-        match export.export_class_type:
-            case 'StaticMesh':
-                export.ReadProperties(False, False)
-                mesh = ImportStaticMesh(export)
+    ImportStaticMeshUAsset(cur_dir + r"\Samples\SM_Door_Small_A.uasset")
 
     print("Done")

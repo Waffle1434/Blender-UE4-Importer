@@ -6,7 +6,7 @@ from mathutils import *
 cur_dir = os.path.dirname(__file__)
 if cur_dir not in sys.path: sys.path.append(cur_dir)
 import import_uasset
-from import_uasset import UAsset, Import, Export, Properties
+from import_uasset import UAsset, Import, Export, Properties, ArchiveToProjectPath
 
 project_dir = r"F:\Projects\Unreal Projects\Assets"
 umodel_path = cur_dir + r"\umodel.exe"
@@ -25,7 +25,7 @@ with bpy.data.libraries.load(str(filepath)) as (data_from, data_to):
     for node_group in data_from.node_groups:
         bpy.ops.wm.link(filepath=str(node_tree_path / node_group), directory=str(node_tree_path), filename=node_group)
 
-def ArchiveToProjectPath(path): return os.path.join(project_dir, "Content", str(pathlib.Path(path).relative_to("\\Game"))) + ".uasset"
+
 def TryGetExtractedImport(imp:Import, extract_dir):
     archive_path = imp.import_ref.object_name.str
     extracted = extracted_imports.get(archive_path)

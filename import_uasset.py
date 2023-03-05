@@ -1,12 +1,12 @@
 from __future__ import annotations
-from dataclasses import dataclass, fields
-import io, uuid, time, os
+import io, uuid, time, os, pathlib
 from struct import *
 from ctypes import *
 from mathutils import *
 
 project_dir = r"F:\Projects\Unreal Projects\Assets"
 logging = True
+try_unknown_structs = True
 
 project_dir = os.path.normpath(project_dir)
 
@@ -109,7 +109,8 @@ class FMeshSectionInfo(PrintableStruct): _fields_ = ( ('material_index', c_int),
 class FStripDataFlags(PrintableStruct): _fields_ = ( ('global_strip_flags', c_ubyte), ('class_strip_flags', c_ubyte) )
 
 prop_table_types = [ "ExpressionOutput", "ScalarParameterValue", "TextureParameterValue", "VectorParameterValue", "MaterialFunctionInfo", "StaticMaterial", "KAggregateGeom", "BodyInstance", 
-                    "KConvexElem", "Transform", "StaticMeshSourceModel", "MeshBuildSettings", "MeshReductionSettings", "MeshUVChannelInfo", "AssetEditorOrbitCameraPosition" ]
+                    "KConvexElem", "Transform", "StaticMeshSourceModel", "MeshBuildSettings", "MeshReductionSettings", "MeshUVChannelInfo", "AssetEditorOrbitCameraPosition", "SimpleMemberReference", 
+                    "CollisionResponse", "ResponseChannel", "StreamingTextureBuildInfo" ]
 
 class ArrayDesc:
     def __init__(self, f, b32=True):
@@ -239,16 +240,21 @@ class UProperty:
                         if self.struct_type in prop_table_types:
                             self.value = Properties().Read(asset)
                         else:
-                            p = f.Position()
-                            try:
-                                self.value = Properties().Read(asset)
-                                prop_table_types.append(self.struct_type)
-                                if logging: print(f"Unknown Struct \"{self.struct_type}\" is probably a property table")
-                            except:
-                                f.Seek(p)
+                            load_raw = not try_unknown_structs
+                            if try_unknown_structs:
+                                p = f.Position()
+                                try:
+                                    self.value = Properties().Read(asset)
+                                    prop_table_types.append(self.struct_type)
+                                    if logging:
+                                        print(f"Unknown Struct \"{self.struct_type}\" is probably a property table")
+                                except:
+                                    f.Seek(p)
+                                    load_raw = True
+                                    pass
+                            if load_raw:
                                 self.value = [x for x in f.ReadBytes(self.len)]
                                 if logging: print(f"Unknown Struct Type \"{self.struct_type}\"")
-                                pass
                 p_diff = f.Position() - (p + self.len)
                 if p_diff != 0:
                     f.Seek(p)
@@ -422,7 +428,7 @@ class USummary:
         elif version_ue4 >= 278: chunk_id = f.ReadInt32()
         if version_ue4 >= 507: self.preload_depends_desc = ArrayDesc(f)
 class UAsset:
-    def __init__(self, filepath, read_all=False):
+    def __init__(self, filepath:str, read_all=False):
         self.filepath = filepath
         self.read_all = read_all
     def __repr__(self) -> str: return f"\"{self.f.byte_stream.name}\", {len(self.imports)} Imports, {len(self.exports)} Exports"
@@ -466,6 +472,7 @@ class UAsset:
         return self
     def __exit__(self, *args): self.Close()
 
+def ArchiveToProjectPath(path): return os.path.join(project_dir, "Content", str(pathlib.Path(path).relative_to("\\Game"))) + ".uasset"
 
 if __name__ != "import_uasset":
     #asset = UAsset(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Materials\M_Base_Trim.uasset")

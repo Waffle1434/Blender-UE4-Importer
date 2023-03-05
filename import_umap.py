@@ -1,32 +1,15 @@
-import bpy, os, sys, math, importlib, pathlib, subprocess
+import bpy, os, sys, math, importlib
 from mathutils import *
 
 cur_dir = os.path.dirname(__file__)
 if cur_dir not in sys.path: sys.path.append(cur_dir)
-import import_uasset
-from import_uasset import UAsset, Import, Export, Vector, Euler, project_dir
+import import_uasset, import_umesh
+from import_uasset import UAsset, Export, Vector, Euler, ArchiveToProjectPath
+from import_umesh import ImportStaticMeshUAsset
 
 hide_noncasting = False
 deg2rad = math.radians(1)
 
-def ImportUnrealFbx(filepath, collider_mode='NONE'):
-    objs_1 = set(bpy.context.collection.objects)
-    bpy.ops.import_scene.fbx(filepath=filepath, use_image_search=False)
-    imported_objs = []
-    for object in set(bpy.context.collection.objects) - objs_1:
-        if object.name.startswith("UCX_"): # Collision
-            if collider_mode == 'NONE':
-                bpy.data.objects.remove(object)
-                continue
-            object.display_type = 'WIRE'
-            object.hide_render = True
-            object.visible_camera = object.visible_diffuse = object.visible_glossy = object.visible_transmission = object.visible_volume_scatter = object.visible_shadow = False
-            object.select_set(False)
-            object.hide_set(collider_mode == 'HIDE')
-        else: imported_objs.append(object)
-    return imported_objs
-
-def ArchiveToProjectPath(path): return os.path.join(project_dir, "Content", str(pathlib.Path(path).relative_to("\\Game"))) + ".uasset"
 def SetupObject(context, name, data=None):
     obj = bpy.data.objects.new(name, data)
     obj.rotation_mode = 'YXZ'
@@ -60,9 +43,12 @@ def TryGetStaticMesh(static_mesh_comp:Export):
         if not mesh:
             mesh_import = static_mesh.import_ref
             if mesh_import:
-                return mesh
+                mesh_path = ArchiveToProjectPath(mesh_import.object_name.str)
+                mesh = ImportStaticMeshUAsset(mesh_path, False)
+                if not mesh:
+                    print(f"Failed to get Static Mesh \"{mesh_path}\"")
     return mesh
-def ProcessSceneExport(export:Export, import_meshes=True):
+def ProcessUMapExport(export:Export, import_meshes=True):
     match export.export_class_type:
         case 'StaticMeshActor':
             export.ReadProperties()
@@ -123,7 +109,7 @@ def ProcessSceneExport(export:Export, import_meshes=True):
                     
                     for comp in bp_comps:
                         child_export = comp.value
-                        #ProcessSceneExport(child_export) # TODO? Can't, need to partly process gend_exp & child_export
+                        #ProcessUMapExport(child_export) # TODO? Can't, need to partly process gend_exp & child_export
                         if child_export.export_class_type == 'StaticMeshComponent':
                             gend_exp = bp_asset.name2exp.get(f"{child_export.object_name.str}_GEN_VARIABLE")
                             if gend_exp:
@@ -139,15 +125,15 @@ def ProcessSceneExport(export:Export, import_meshes=True):
 
                                 Transform(gend_exp, obj)
                 return
-def LoadUAssetScene(filepath, import_meshes=True):
+def LoadUMap(filepath, import_meshes=True):
     with UAsset(filepath) as asset:
         for export in asset.exports:
-            ProcessSceneExport(export, import_meshes)
+            ProcessUMapExport(export, import_meshes)
         if hasattr(asset, 'import_cache'):
             for imp_asset in asset.import_cache.values(): imp_asset.Close()
 
 if __name__ != "import_umap":
     importlib.reload(import_uasset)
-    LoadUAssetScene(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary.umap", False)
-    #LoadUAssetScene(r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\Example_Stationary.umap", False)
+    LoadUMap(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary.umap", False)
+    #LoadUMap(r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\Example_Stationary.umap", False)
     print("Done")
