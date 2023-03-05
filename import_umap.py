@@ -1,8 +1,10 @@
-import os, sys
+import bpy, os, sys, math, importlib, pathlib, subprocess
+from mathutils import *
 
-dir = os.path.dirname(__file__)
-if dir not in sys.path: sys.path.append(dir)
-from import_uasset import *
+cur_dir = os.path.dirname(__file__)
+if cur_dir not in sys.path: sys.path.append(cur_dir)
+import import_uasset
+from import_uasset import UAsset, Import, Export, Vector, Euler, project_dir, exported_base_dir, umodel_path
 
 hide_noncasting = False
 deg2rad = math.radians(1)
@@ -167,6 +169,7 @@ def LoadUAssetScene(filepath, import_meshes=True):
             for imp_asset in asset.import_cache.values(): imp_asset.Close()
 
 if __name__ != "import_umap":
+    importlib.reload(import_uasset)
     LoadUAssetScene(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary.umap", False)
     #LoadUAssetScene(r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\Example_Stationary.umap", False)
     print("Done")

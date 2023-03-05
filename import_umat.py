@@ -3,15 +3,14 @@ import bpy, sys, time, os, pathlib, subprocess, importlib
 from struct import *
 from mathutils import *
 
-dir = os.path.dirname(__file__)
-if dir not in sys.path: sys.path.append(dir)
+cur_dir = os.path.dirname(__file__)
+if cur_dir not in sys.path: sys.path.append(cur_dir)
 import import_uasset
-from import_uasset import *
+from import_uasset import UAsset, Import, Export, Properties
 
 exported_base_dir = r"F:\Art\Assets"
 project_dir = r"F:\Projects\Unreal Projects\Assets"
-umodel_path = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\umodel.exe"
-#umodel_path = r"F:\Art\Assets\Game\Blender UE4 Importer\umodel.exe"
+umodel_path = cur_dir + r"\umodel.exe"
 
 logging = True
 mute_ior = True
@@ -22,14 +21,11 @@ project_dir = os.path.normpath(project_dir)
 extract_dir = os.path.join(project_dir, "Export")
 extracted_imports = {}
 
-cur_dir = pathlib.Path(os.path.dirname(__file__))
-filepath = cur_dir / "UE_nodes.blend"
+filepath = pathlib.Path(cur_dir) / "UE_nodes.blend"
 node_tree_path = filepath / "NodeTree"
-
 with bpy.data.libraries.load(str(filepath)) as (data_from, data_to):
     for node_group in data_from.node_groups:
         bpy.ops.wm.link(filepath=str(node_tree_path / node_group), directory=str(node_tree_path), filename=node_group)
-
 
 def ArchiveToProjectPath(path): return os.path.join(project_dir, "Content", str(pathlib.Path(path).relative_to("\\Game"))) + ".uasset"
 def TryGetExtractedImport(imp:Import, extract_dir):
@@ -52,7 +48,6 @@ def TryGetExtractedImport(imp:Import, extract_dir):
                     pass
         extracted_imports[archive_path] = extracted
     return extracted
-
 
 class UE2BlenderNodeMapping():
     def __init__(self, bl_idname, subtype=None, label=None, hide=True, inputs=None, outputs=None, color=None):
@@ -143,7 +138,7 @@ def SetupNode(node_tree, name, mapping, node_data): # TODO: inline
             node.inputs['Fac'].default_value = 0
     return node
 def SetNodePos(node, param_x, param_y, params:Properties): node.location = (params.TryGetValue(param_x,0), -params.TryGetValue(param_y,0))
-def CreateNode(exp:Export, mat, nodes_data, graph_data, mat_object):
+def CreateNode(exp:Export, mat, nodes_data, graph_data, mat_mesh):
     name = exp.object_name.FullName()
     classname = exp.export_class_type # TODO: inline?
     nodes_data[name] = node_data = NodeData(exp)
@@ -183,8 +178,8 @@ def CreateNode(exp:Export, mat, nodes_data, graph_data, mat_object):
         case 'MaterialExpressionTextureCoordinate':
             uv_i = params.TryGetValue('CoordinateIndex')
             if uv_i != None:
-                if mat_object == None: mat_object = bpy.context.object # TODO: less fragile?
-                try: node.uv_map = mat_object.data.uv_layers.keys()[uv_i]
+                if mat_mesh == None: mat_mesh = bpy.context.object.data # TODO: less fragile?
+                try: node.uv_map = mat_mesh.uv_layers.keys()[uv_i]
                 except:
                     print(f"Failed to use UV{uv_i} from mesh")
                     pass
@@ -233,7 +228,7 @@ def LinkSockets(mat, nodes_data, node_data):
                     case 'StructProperty': LinkSocket(mat, nodes_data, node_data, expr, property, mapping.inputs)
                     case 'ArrayProperty':
                         for i, elem in enumerate(expr.value): LinkSocket(mat, nodes_data, node_data, elem['Input'], i, { i:mapping.inputs[property][i] })
-def ImportUMaterial(filepath, mat_name=None, mat_object=None): # TODO: return asset
+def ImportUMaterial(filepath, mat_name=None, mat_mesh=None): # TODO: return asset
     t0 = time.time()
     if logging: print(f"Import \"{filepath}\"")
 
@@ -255,9 +250,9 @@ def ImportUMaterial(filepath, mat_name=None, mat_object=None): # TODO: return as
                     node_tree.nodes['Material Output'].location = node.location + Vector((300,0))
                     node_data = NodeData(exp, node=node)
 
-                    for exr_exp in params.TryGetValue('Expressions', ()): CreateNode(exr_exp.value, mat, nodes_data, graph_data, mat_object)
+                    for exr_exp in params.TryGetValue('Expressions', ()): CreateNode(exr_exp.value, mat, nodes_data, graph_data, mat_mesh)
                     for comment_exp in params.TryGetValue('EditorComments', ()):
-                        comment_node = CreateNode(comment_exp.value, mat, nodes_data, graph_data, mat_object).node
+                        comment_node = CreateNode(comment_exp.value, mat, nodes_data, graph_data, mat_mesh).node
                         for eval_node in filter(lambda n: not n.parent, node_tree.nodes):
                             diff = eval_node.location - comment_node.location
                             if diff.x > 0 and diff.x < comment_node.width and diff.y < 0 and diff.y > -comment_node.height: eval_node.parent = comment_node
@@ -295,7 +290,7 @@ def ImportUMaterial(filepath, mat_name=None, mat_object=None): # TODO: return as
                     #mat_parent_name = mat_parent.object_name.FullName()
                     mat_path = ArchiveToProjectPath(mat_parent.import_ref.object_name.FullName())
                     if not mat_name: mat_name = exp.object_name.FullName() # TODO: unify
-                    mat, graph_data = ImportUMaterial(mat_path, mat_name, mat_object) # TODO: handle not found
+                    mat, graph_data = ImportUMaterial(mat_path, mat_name, mat_mesh) # TODO: handle not found
 
                     for param in params.TryGetValue('ScalarParameterValues', ()):
                         node_data = graph_data.node_guids.get(param.value.TryGetValue('ExpressionGUID'))
