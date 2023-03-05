@@ -312,7 +312,7 @@ def ImportUMaterial(filepath, mat_name=None, mat_mesh=None): # TODO: return asse
     if logging: print(f"Imported {mat.name}: {(time.time() - t0) * 1000:.2f}ms")
     return (mat, graph_data)
 
-if __name__ != "import_uasset_mat":
+if __name__ != "import_umat":
     importlib.reload(import_uasset)
     for mat in bpy.data.materials: bpy.data.materials.remove(mat)
 

@@ -130,7 +130,7 @@ def ImportStaticMesh(self: Export, import_materials=True):
     # remaining is SpeedTree
     return mesh
 
-if __name__ != "import_uasset_mesh":
+if __name__ != "import_umesh":
     importlib.reload(import_uasset)
     importlib.reload(import_umat)
 

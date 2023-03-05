@@ -108,8 +108,8 @@ class FBoxSphereBounds(PrintableStruct): _fields_ = ( ('origin', FVector), ('box
 class FMeshSectionInfo(PrintableStruct): _fields_ = ( ('material_index', c_int), ('collision', c_bool), ('shadow', c_bool) )
 class FStripDataFlags(PrintableStruct): _fields_ = ( ('global_strip_flags', c_ubyte), ('class_strip_flags', c_ubyte) )
 
-prop_table_types = ( "ExpressionOutput", "ScalarParameterValue", "TextureParameterValue", "VectorParameterValue", "StaticMaterial", "KAggregateGeom", "BodyInstance", 
-                    "KConvexElem", "Transform", "StaticMeshSourceModel", "MeshBuildSettings", "MeshReductionSettings", "MeshUVChannelInfo", "AssetEditorOrbitCameraPosition" )
+prop_table_types = [ "ExpressionOutput", "ScalarParameterValue", "TextureParameterValue", "VectorParameterValue", "MaterialFunctionInfo", "StaticMaterial", "KAggregateGeom", "BodyInstance", 
+                    "KConvexElem", "Transform", "StaticMeshSourceModel", "MeshBuildSettings", "MeshReductionSettings", "MeshUVChannelInfo", "AssetEditorOrbitCameraPosition" ]
 
 class ArrayDesc:
     def __init__(self, f, b32=True):
@@ -234,16 +234,21 @@ class UProperty:
                         self.value = asset.GetExport(f.ReadInt32())# TODO: other data is default value?
                         f.Seek(p + self.len)
                     case "ExpressionInput": self.value = FExpressionInput(asset)
-                    case "StreamingTextureBuildInfo": self.value = [x for x in f.ReadBytes(self.len)]
-                    #case "MeshSectionInfoMap":
-                        #self.value = Properties().Read(asset)
+                    #case "StreamingTextureBuildInfo": self.value = [x for x in f.ReadBytes(self.len)]
                     case _:
                         if self.struct_type in prop_table_types:
                             self.value = Properties().Read(asset)
                         else:
-                            self.value = [x for x in f.ReadBytes(self.len)]
-                            if logging: print(f"Uknown Struct Type \"{self.struct_type}\"")
-                            #raise Exception(f"Uknown Struct Type \"{struct_type}\"")
+                            p = f.Position()
+                            try:
+                                self.value = Properties().Read(asset)
+                                prop_table_types.append(self.struct_type)
+                                if logging: print(f"Unknown Struct \"{self.struct_type}\" is probably a property table")
+                            except:
+                                f.Seek(p)
+                                self.value = [x for x in f.ReadBytes(self.len)]
+                                if logging: print(f"Unknown Struct Type \"{self.struct_type}\"")
+                                pass
                 p_diff = f.Position() - (p + self.len)
                 if p_diff != 0:
                     f.Seek(p)
