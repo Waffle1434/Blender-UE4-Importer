@@ -228,8 +228,9 @@ def LinkSockets(mat, nodes_data, node_data):
                         for i, elem in enumerate(expr.value): LinkSocket(mat, nodes_data, node_data, elem['Input'], i, { i:mapping.inputs[property][i] })
 def ImportUMaterial(filepath, mat_name=None, mat_mesh=None): # TODO: return asset
     t0 = time.time()
-    if logging: print(f"Import \"{filepath}\"")
-
+    if not os.path.exists(filepath):
+        print(f"Error: \"{filepath}\" Does Not Exist!")
+        return (None, None)
     with UAsset(filepath, True) as asset:
         for exp in asset.exports:
             classname = exp.export_class_type
@@ -242,6 +243,7 @@ def ImportUMaterial(filepath, mat_name=None, mat_mesh=None): # TODO: return asse
                     if not mat_name: mat_name = exp.object_name.FullName()
                     mat = bpy.data.materials.new(mat_name)
                     mat.use_nodes = True
+                    mat["UAsset"] = asset.f.byte_stream.name
                     node_tree = mat.node_tree
                     node = node_tree.nodes['Principled BSDF']
                     SetNodePos(node, 'EditorX', 'EditorY', params)

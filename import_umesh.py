@@ -84,21 +84,21 @@ def ImportStaticMesh(self:Export, import_materials=True, logging=True):
                     assert False
 
                 spl_norms = []
-                for i_wedge in range(2, len(wedge_indices), 3):
+                for i_wedge in range(0, len(wedge_indices), 3):
                     face = mdl_bm.faces.new((
-                        mdl_bm.verts[wedge_indices[i_wedge-2]],
-                        mdl_bm.verts[wedge_indices[i_wedge-1]],
-                        mdl_bm.verts[wedge_indices[i_wedge]]
+                        mdl_bm.verts[wedge_indices[i_wedge]],
+                        mdl_bm.verts[wedge_indices[i_wedge+1]],
+                        mdl_bm.verts[wedge_indices[i_wedge+2]]
                     ))
                     i_poly = int(i_wedge / 3)
                     #face.smooth = face_smoothing_mask[i_poly] == 0
                     face.material_index = face_mat_indices[i_poly]
-                    for i_loop in range(3): spl_norms.append(wedge_normals[i_wedge - 2 + i_loop].ToVectorPos())
+                    for i_loop in range(3): spl_norms.append(wedge_normals[i_wedge + i_loop].ToVectorPos())
                     for i_uv in range(len(uvs)):
                         uv_lay = uvs[i_uv]
                         w_uvs = wedge_uvs[i_uv]
                         for i_loop in range(3):
-                            uv = w_uvs[i_wedge - 2 + i_loop]
+                            uv = w_uvs[i_wedge + i_loop]
                             face.loops[i_loop][uv_lay].uv = (uv.x, -uv.y)
                 
                 mesh = bpy.data.meshes.new(self.object_name.str)
@@ -127,7 +127,7 @@ def ImportStaticMesh(self:Export, import_materials=True, logging=True):
                 local_uv_densities = (f.ReadFloat(), f.ReadFloat(), f.ReadFloat(), f.ReadFloat())
             
             if import_materials:
-                umat_imp = mat_interface.import_ref.object_name.str
+                umat_imp = mat_interface.import_ref.object_name.FullName()
                 umat_path = ArchiveToProjectPath(umat_imp)
                 mat, graph_data = ImportUMaterial(umat_path, mat_mesh=mesh)
                 mesh.materials.append(mat)

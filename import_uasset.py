@@ -111,7 +111,8 @@ class FStripDataFlags(PrintableStruct): _fields_ = ( ('global_strip_flags', c_ub
 
 prop_table_types = [ "ExpressionOutput", "ScalarParameterValue", "TextureParameterValue", "VectorParameterValue", "MaterialFunctionInfo", "StaticMaterial", "KAggregateGeom", "BodyInstance", 
                     "KConvexElem", "Transform", "StaticMeshSourceModel", "MeshBuildSettings", "MeshReductionSettings", "MeshUVChannelInfo", "AssetEditorOrbitCameraPosition", "SimpleMemberReference", 
-                    "CollisionResponse", "ResponseChannel", "StreamingTextureBuildInfo" ]
+                    "CollisionResponse", "ResponseChannel", "StreamingTextureBuildInfo" ] # MaterialTextureInfo
+prop_table_blacklist = { "MaterialTextureInfo" }
 
 class ArrayDesc:
     def __init__(self, f, b32=True):
@@ -236,7 +237,6 @@ class UProperty:
                         self.value = asset.GetExport(f.ReadInt32())# TODO: other data is default value?
                         f.Seek(p + self.len)
                     case "ExpressionInput": self.value = FExpressionInput(asset)
-                    #case "StreamingTextureBuildInfo": self.value = [x for x in f.ReadBytes(self.len)]
                     case _:
                         if self.struct_type in prop_table_types:
                             self.value = Properties().Read(asset)
@@ -246,9 +246,10 @@ class UProperty:
                                 p = f.Position()
                                 try:
                                     self.value = Properties().Read(asset)
-                                    prop_table_types.append(self.struct_type)
-                                    if logging:
-                                        print(f"Unknown Struct \"{self.struct_type}\" is probably a property table")
+                                    if self.struct_type not in prop_table_blacklist:
+                                        prop_table_types.append(self.struct_type)
+                                        if logging:
+                                            print(f"Unknown Struct \"{self.struct_type}\" is probably a property table")
                                 except:
                                     f.Seek(p)
                                     load_raw = True

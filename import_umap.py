@@ -3,8 +3,9 @@ from mathutils import *
 
 cur_dir = os.path.dirname(__file__)
 if cur_dir not in sys.path: sys.path.append(cur_dir)
-import import_uasset, import_umesh
+import import_uasset, import_umat, import_umesh
 from import_uasset import UAsset, Export, Vector, Euler, ArchiveToProjectPath
+from import_umat import ImportUMaterial
 from import_umesh import ImportStaticMeshUAsset
 
 hide_noncasting = False
@@ -34,7 +35,7 @@ def TryApplyRootComponent(export:Export, obj, pitch_offset=0):
         Transform(root_exp, obj, pitch_offset)
         return True
     return False
-def TryGetStaticMesh(static_mesh_comp:Export):
+def TryGetStaticMesh(static_mesh_comp:Export, import_materials=True):
     mesh = None
     static_mesh = static_mesh_comp.properties.TryGetValue('StaticMesh')
     if static_mesh:
@@ -44,8 +45,17 @@ def TryGetStaticMesh(static_mesh_comp:Export):
             mesh_import = static_mesh.import_ref
             if mesh_import:
                 mesh_path = ArchiveToProjectPath(mesh_import.object_name.str)
-                mesh = ImportStaticMeshUAsset(mesh_path, False)
+                mesh = ImportStaticMeshUAsset(mesh_path, import_materials)
                 if not mesh: print(f"Failed to get Static Mesh \"{mesh_path}\"")
+        mat_overrides = static_mesh_comp.properties.TryGetValue('OverrideMaterials')
+        if mat_overrides:
+            for i in range(len(mat_overrides)):
+                mat_override = mat_overrides[i].value
+                if mat_override:
+                    umat_imp = mat_override.import_ref.object_name.FullName()
+                    umat_path = ArchiveToProjectPath(umat_imp)
+                    mat, graph_data = ImportUMaterial(umat_path, mat_mesh=mesh)
+                    mesh.materials[i] = mat
     return mesh
 def ProcessUMapExport(export:Export, import_meshes=True):
     match export.export_class_type:
@@ -135,6 +145,7 @@ def LoadUMap(filepath, import_meshes=True):
 
 if __name__ != "import_umap":
     importlib.reload(import_uasset)
+    importlib.reload(import_umat)
     importlib.reload(import_umesh)
     LoadUMap(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary.umap", True)
     #LoadUMap(r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\Example_Stationary.umap", True)
