@@ -1,4 +1,4 @@
-import bpy, os, sys, math, importlib
+import bpy, os, sys, math, importlib, time
 from mathutils import *
 
 cur_dir = os.path.dirname(__file__)
@@ -45,8 +45,7 @@ def TryGetStaticMesh(static_mesh_comp:Export):
             if mesh_import:
                 mesh_path = ArchiveToProjectPath(mesh_import.object_name.str)
                 mesh = ImportStaticMeshUAsset(mesh_path, False)
-                if not mesh:
-                    print(f"Failed to get Static Mesh \"{mesh_path}\"")
+                if not mesh: print(f"Failed to get Static Mesh \"{mesh_path}\"")
     return mesh
 def ProcessUMapExport(export:Export, import_meshes=True):
     match export.export_class_type:
@@ -115,7 +114,7 @@ def ProcessUMapExport(export:Export, import_meshes=True):
                             if gend_exp:
                                 gend_exp.ReadProperties()
 
-                                mesh = TryGetStaticMesh(gend_exp)
+                                mesh = TryGetStaticMesh(gend_exp) if import_meshes else None
                                 child_export.bl_obj = obj = SetupObject(bpy.context, child_export.object_name.str, mesh)
 
                                 attach = child_export.properties.TryGetValue('AttachParent') # TODO: unify?
@@ -126,14 +125,17 @@ def ProcessUMapExport(export:Export, import_meshes=True):
                                 Transform(gend_exp, obj)
                 return
 def LoadUMap(filepath, import_meshes=True):
+    t0 = time.time()
     with UAsset(filepath) as asset:
         for export in asset.exports:
             ProcessUMapExport(export, import_meshes)
-        if hasattr(asset, 'import_cache'):
-            for imp_asset in asset.import_cache.values(): imp_asset.Close()
+    if hasattr(asset, 'import_cache'):
+        for imp_asset in asset.import_cache.values(): imp_asset.Close()
+    print(f"Imported {asset}: {(time.time() - t0) * 1000:.2f}ms")
 
 if __name__ != "import_umap":
     importlib.reload(import_uasset)
-    LoadUMap(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary.umap", False)
-    #LoadUMap(r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\Example_Stationary.umap", False)
+    importlib.reload(import_umesh)
+    LoadUMap(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary.umap", True)
+    #LoadUMap(r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\Example_Stationary.umap", True)
     print("Done")

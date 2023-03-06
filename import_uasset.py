@@ -92,6 +92,7 @@ class FVector(PrintableStruct):
     _fields_ = ( ('x', c_float), ('y', c_float), ('z', c_float) )
     def __str__(self): return StructToString(self, False)
     def ToVector(self): return Vector((self.x, self.y, self.z))
+    def ToVectorPos(self): return Vector((self.y, self.x, self.z))
 class FVector2D(PrintableStruct):
     _fields_ = ( ('x', c_float), ('y', c_float) )
     def __str__(self): return StructToString(self, False)

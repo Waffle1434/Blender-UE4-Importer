@@ -1,5 +1,6 @@
-import os, io, sys, math, uuid, bpy, bmesh, importlib
+import os, io, sys, math, uuid, bpy, bmesh, importlib, time
 from ctypes import *
+from mathutils import Vector
 
 cur_dir = os.path.dirname(__file__)
 if cur_dir not in sys.path: sys.path.append(cur_dir)
@@ -7,9 +8,9 @@ import import_uasset, import_umat
 from import_uasset import UAsset, Export, FStripDataFlags, FVector, FVector2D, FColor, Euler, ArchiveToProjectPath
 from import_umat import ImportUMaterial
 
-def ImportStaticMesh(self:Export, import_materials=True):
+def ImportStaticMesh(self:Export, import_materials=True, logging=True):
+    t0 = time.time()
     self.ReadProperties(False, False)
-
     asset = self.asset
     f = self.asset.f
     
@@ -71,7 +72,7 @@ def ImportStaticMesh(self:Export, import_materials=True):
                 if version >= 1: mat_index_to_import_index = f.ReadStructure(c_int32 * f.ReadInt32())
 
                 mdl_bm = bmesh.new()
-                for pos in vertices: mdl_bm.verts.new(pos.ToVector())
+                for pos in vertices: mdl_bm.verts.new(pos.ToVectorPos())
                 mdl_bm.verts.ensure_lookup_table()
                 
                 uvs = []
@@ -85,24 +86,26 @@ def ImportStaticMesh(self:Export, import_materials=True):
                 spl_norms = []
                 for i_wedge in range(2, len(wedge_indices), 3):
                     face = mdl_bm.faces.new((
-                        mdl_bm.verts[wedge_indices[i_wedge]],
+                        mdl_bm.verts[wedge_indices[i_wedge-2]],
                         mdl_bm.verts[wedge_indices[i_wedge-1]],
-                        mdl_bm.verts[wedge_indices[i_wedge-2]]
+                        mdl_bm.verts[wedge_indices[i_wedge]]
                     ))
-                    face.material_index = face_mat_indices[int(i_wedge / 3)]
-                    for i_loop in range(3): spl_norms.append(wedge_normals[i_wedge - i_loop].ToVector())
+                    i_poly = int(i_wedge / 3)
+                    #face.smooth = face_smoothing_mask[i_poly] == 0
+                    face.material_index = face_mat_indices[i_poly]
+                    for i_loop in range(3): spl_norms.append(wedge_normals[i_wedge - 2 + i_loop].ToVectorPos())
                     for i_uv in range(len(uvs)):
                         uv_lay = uvs[i_uv]
                         w_uvs = wedge_uvs[i_uv]
                         for i_loop in range(3):
-                            uv = w_uvs[i_wedge - i_loop]
+                            uv = w_uvs[i_wedge - 2 + i_loop]
                             face.loops[i_loop][uv_lay].uv = (uv.x, -uv.y)
                 
                 mesh = bpy.data.meshes.new(self.object_name.str)
                 mdl_bm.to_mesh(mesh)
                 mesh.normals_split_custom_set(spl_norms)
                 mesh.use_auto_smooth = True
-                mesh.transform(Euler((0,0,math.radians(90))).to_matrix().to_4x4()*0.01)
+                mesh.transform(Euler((0,0,math.radians(0))).to_matrix().to_4x4()*0.01)
                 mesh["UAsset"] = self.asset.f.byte_stream.name
                 # TODO: flip_normals() faster?
 
@@ -130,13 +133,16 @@ def ImportStaticMesh(self:Export, import_materials=True):
                 mesh.materials.append(mat)
     
     # remaining is SpeedTree
+
+    print(f"Imported {self.object_name}: {(time.time() - t0) * 1000:.2f}ms")
     return mesh
-def ImportStaticMeshUAsset(filepath:str, import_materials=True):
+def ImportStaticMeshUAsset(filepath:str, import_materials=True, logging=True):
     asset = UAsset(filepath)
     asset.Read(False)
     for export in asset.exports:
         match export.export_class_type:
             case 'StaticMesh': return ImportStaticMesh(export, import_materials)
+    if logging: print(f"\"{filepath}\" Static Mesh Export Not Found")
     return None
 
 if __name__ != "import_umesh":
