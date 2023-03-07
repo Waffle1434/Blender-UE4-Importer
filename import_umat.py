@@ -263,6 +263,14 @@ def ImportUMaterial(filepath, mat_name=None, mat_mesh=None): # TODO: return asse
                             node.inputs['Transmission'].default_value = 1
                         case 'BLEND_Masked':
                             mat.blend_method = mat.shadow_method = 'CLIP'
+                        case 'BLEND_Additive':
+                            mat.blend_method, mat.shadow_method = ('BLEND', 'NONE')
+
+                            additive = node_tree.nodes.new('ShaderNodeGroup')
+                            additive.node_tree = bpy.data.node_groups['AdditiveSurface']
+                            additive.location = node.location + Vector((0, 150))
+                            node_tree.links.new(additive.outputs[0], node_tree.nodes['Material Output'].inputs['Surface'])
+                            node_data.input_remap = { 'EmissiveColor':additive.inputs['Emission'] }
                         case _:
                             mat.blend_method = mat.shadow_method = 'OPAQUE'
                     mat.use_backface_culling = not params.TryGetValue('TwoSided', False)
