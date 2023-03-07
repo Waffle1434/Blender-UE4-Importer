@@ -287,7 +287,6 @@ def ImportUMaterial(filepath, mat_name=None, mat_mesh=None): # TODO: return asse
                     if ior.is_linked: ior.links[0].is_muted = mute_ior
                 case 'MaterialInstanceConstant':
                     mat_parent = params.TryGetValue('Parent')
-                    #mat_parent_name = mat_parent.object_name.FullName()
                     mat_path = ArchiveToProjectPath(mat_parent.import_ref.object_name.FullName())
                     if not mat_name: mat_name = exp.object_name.FullName() # TODO: unify
                     mat, graph_data = ImportUMaterial(mat_path, mat_name, mat_mesh) # TODO: handle not found
@@ -313,6 +312,12 @@ def ImportUMaterial(filepath, mat_name=None, mat_mesh=None): # TODO: return asse
     
     if logging: print(f"Imported {mat.name}: {(time.time() - t0) * 1000:.2f}ms")
     return (mat, graph_data)
+def TryGetUMaterialImport(mat_imp:Import, mat_mesh):
+    mat = bpy.data.materials.get(mat_imp.object_name.FullName())
+    if not mat:
+        umat_path = ArchiveToProjectPath(mat_imp.import_ref.object_name.FullName())
+        mat, graph_data = ImportUMaterial(umat_path, mat_mesh=mat_mesh)
+    return mat
 
 if __name__ != "import_umat":
     importlib.reload(import_uasset)

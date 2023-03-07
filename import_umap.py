@@ -1,11 +1,11 @@
-import bpy, os, sys, math, importlib, time
+import bpy, os, sys, math, importlib, time, zlib
 from mathutils import *
 
 cur_dir = os.path.dirname(__file__)
 if cur_dir not in sys.path: sys.path.append(cur_dir)
 import import_uasset, import_umat, import_umesh
-from import_uasset import UAsset, Export, Vector, Euler, ArchiveToProjectPath
-from import_umat import ImportUMaterial
+from import_uasset import UAsset, Import, Export, Vector, Euler, ArchiveToProjectPath
+from import_umat import TryGetUMaterialImport
 from import_umesh import ImportStaticMeshUAsset
 
 hide_noncasting = False
@@ -47,15 +47,19 @@ def TryGetStaticMesh(static_mesh_comp:Export, import_materials=True):
                 mesh_path = ArchiveToProjectPath(mesh_import.object_name.str)
                 mesh = ImportStaticMeshUAsset(mesh_path, import_materials)
                 if not mesh: print(f"Failed to get Static Mesh \"{mesh_path}\"")
-        mat_overrides = static_mesh_comp.properties.TryGetValue('OverrideMaterials')
+        mat_overrides:list[Import] = static_mesh_comp.properties.TryGetValue('OverrideMaterials')
         if mat_overrides:
-            for i in range(len(mat_overrides)):
-                mat_override = mat_overrides[i].value
-                if mat_override:
-                    umat_imp = mat_override.import_ref.object_name.FullName()
-                    umat_path = ArchiveToProjectPath(umat_imp)
-                    mat, graph_data = ImportUMaterial(umat_path, mat_mesh=mesh)
-                    mesh.materials[i] = mat
+            hash = 1
+            for mat_override in mat_overrides: hash = zlib.adler32(str.encode(mat_override.value.object_name.FullName() if mat_override.value else "None"), hash)
+            override_mesh_name = f"{mesh_name}_{hash:X}"
+            override_mesh = bpy.data.meshes.get(override_mesh_name)
+            if override_mesh: mesh = override_mesh
+            else:
+                mesh = mesh.copy()
+                mesh.name = override_mesh_name
+                for i in range(len(mat_overrides)):
+                    mat_override = mat_overrides[i].value
+                    if mat_override: mesh.materials[i] = TryGetUMaterialImport(mat_override, mat_mesh=mesh)
     return mesh
 def ProcessUMapExport(export:Export, import_meshes=True):
     match export.export_class_type:

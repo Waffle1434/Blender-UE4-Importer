@@ -6,7 +6,7 @@ cur_dir = os.path.dirname(__file__)
 if cur_dir not in sys.path: sys.path.append(cur_dir)
 import import_uasset, import_umat
 from import_uasset import UAsset, Export, FStripDataFlags, FVector, FVector2D, FColor, Euler, ArchiveToProjectPath
-from import_umat import ImportUMaterial
+from import_umat import TryGetUMaterialImport
 
 def ImportStaticMesh(self:Export, import_materials=True, logging=True):
     t0 = time.time()
@@ -126,11 +126,7 @@ def ImportStaticMesh(self:Export, import_materials=True, logging=True):
                 initialized, override_densities = (f.ReadBool32(), f.ReadBool32())
                 local_uv_densities = (f.ReadFloat(), f.ReadFloat(), f.ReadFloat(), f.ReadFloat())
             
-            if import_materials:
-                umat_imp = mat_interface.import_ref.object_name.FullName()
-                umat_path = ArchiveToProjectPath(umat_imp)
-                mat, graph_data = ImportUMaterial(umat_path, mat_mesh=mesh)
-                mesh.materials.append(mat)
+            if import_materials: mesh.materials.append(TryGetUMaterialImport(mat_interface, mat_mesh=mesh))
     
     # remaining is SpeedTree
 
