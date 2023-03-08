@@ -155,23 +155,25 @@ class Export: #FObjectExport
     def __init__(self, asset:UAsset):
         self.asset = asset
         f = asset.f
-        self.class_index, self.super_index = (f.ReadInt32(), f.ReadInt32())
+        self.class_index, self.super_index = f.ReadStruct('ii', 8)
         if asset.summary.version_ue4 >= 508: self.template_index = f.ReadInt32()
         self.outer_index = f.ReadInt32()
         self.object_name = f.ReadFName(asset.names)
         self.object_flags = f.ReadUInt32()
         self.serial_desc = ArrayDesc(f, asset.summary.version_ue4 < 511)
-        self.force_export, self.not_for_client, self.not_for_server = (f.ReadIntBool(), f.ReadIntBool(), f.ReadIntBool())
+        self.force_export, self.not_for_client, self.not_for_server = f.ReadStruct('iii', 12)
         self.package_guid = f.ReadGuid()
         self.package_flags = f.ReadUInt32()
         if asset.summary.version_ue4 >= 365: self.not_always_loaded_for_editor = f.ReadIntBool()
         if asset.summary.version_ue4 >= 465: self.is_asset = f.ReadIntBool()
         if asset.summary.version_ue4 >= 507:
-            self.export_depends_offset = f.ReadInt32()
-            self.ser_before_ser_depends_size = f.ReadInt32()
-            self.create_before_ser_depends_size = f.ReadInt32()
-            self.ser_before_create_depends_size = f.ReadInt32()
-            self.create_before_create_depends_size = f.ReadInt32()
+            f.Seek(20, io.SEEK_CUR)
+            '''vals = f.ReadStruct('iiiii', 20)
+            self.export_depends_offset = vals[0]
+            self.ser_before_ser_depends_size = vals[1]
+            self.create_before_ser_depends_size = vals[2]
+            self.ser_before_create_depends_size = vals[3]
+            self.create_before_create_depends_size = vals[4]'''
         
         self.properties = None
         self.export_class = asset.DecodePackageIndex(self.class_index)
