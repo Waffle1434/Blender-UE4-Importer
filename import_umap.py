@@ -64,14 +64,14 @@ def TryGetStaticMesh(static_mesh_comp:Export, import_materials=True):
 def ProcessUMapExport(export:Export, import_meshes=True):
     match export.export_class_type:
         case 'StaticMeshActor':
-            export.ReadProperties()
+            export.ReadProperties(True, False)
             static_mesh_comp = export.properties.TryGetValue('StaticMeshComponent') if import_meshes else None
             mesh = TryGetStaticMesh(static_mesh_comp) if static_mesh_comp else None
             
             obj = SetupObject(bpy.context, export.object_name.str, mesh)
             TryApplyRootComponent(export, obj)
         case 'PointLight' | 'SpotLight':
-            export.ReadProperties()
+            export.ReadProperties(True, False)
 
             match export.export_class_type:
                 case 'PointLight': light_type = 'POINT'
@@ -101,7 +101,7 @@ def ProcessUMapExport(export:Export, import_meshes=True):
                     light.spot_blend = 1 - (inner_angle / outer_angle)
         case _:
             if export.export_class.class_name == 'BlueprintGeneratedClass':
-                export.ReadProperties()
+                export.ReadProperties(True, False)
 
                 bp_obj = SetupObject(bpy.context, export.object_name.str)
                 TryApplyRootComponent(export, bp_obj)

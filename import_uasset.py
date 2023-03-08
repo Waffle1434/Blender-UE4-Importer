@@ -88,15 +88,19 @@ class FExpressionInput:
             self.mask = asset.f.ReadInt32()
             self.mask_rgba = (asset.f.ReadInt32(),asset.f.ReadInt32(),asset.f.ReadInt32(),asset.f.ReadInt32())
     def __repr__(self) -> str: return f"{self.node}({self.node_output_i}) {self.input_name}(Mask={self.mask}, Mask RGBA={str(self.mask_rgba).replace(' ','')}"
+class FVector2D(PrintableStruct):
+    _fields_ = ( ('x', c_float), ('y', c_float) )
+    def __str__(self): return StructToString(self, False)
+    def ToTuple(self): return (self.x, self.y)
 class FVector(PrintableStruct):
     _fields_ = ( ('x', c_float), ('y', c_float), ('z', c_float) )
     def __str__(self): return StructToString(self, False)
     def ToVector(self): return Vector((self.x, self.y, self.z))
     def ToVectorPos(self): return Vector((self.y, self.x, self.z))
-class FVector2D(PrintableStruct):
-    _fields_ = ( ('x', c_float), ('y', c_float) )
+class FVector4(PrintableStruct):
+    _fields_ = ( ('x', c_float), ('y', c_float), ('z', c_float), ('w', c_float) )
     def __str__(self): return StructToString(self, False)
-    def ToTuple(self): return (self.x, self.y)
+class FIntPoint(PrintableStruct): _fields_ = ( ('x', c_int), ('y', c_int) )
 class FQuat(PrintableStruct):
     _fields_ = ( ('x', c_float), ('y', c_float), ('z', c_float), ('w', c_float) )
     def __str__(self): return StructToString(self, False)
@@ -109,10 +113,12 @@ class FBoxSphereBounds(PrintableStruct): _fields_ = ( ('origin', FVector), ('box
 class FMeshSectionInfo(PrintableStruct): _fields_ = ( ('material_index', c_int), ('collision', c_bool), ('shadow', c_bool) )
 class FStripDataFlags(PrintableStruct): _fields_ = ( ('global_strip_flags', c_ubyte), ('class_strip_flags', c_ubyte) )
 
-prop_table_types = [ "ExpressionOutput", "ScalarParameterValue", "TextureParameterValue", "VectorParameterValue", "MaterialFunctionInfo", "StaticMaterial", "KAggregateGeom", "BodyInstance", 
+prop_table_types = { "ExpressionOutput", "ScalarParameterValue", "TextureParameterValue", "VectorParameterValue", "MaterialFunctionInfo", "StaticMaterial", "KAggregateGeom", "BodyInstance", 
                     "KConvexElem", "Transform", "StaticMeshSourceModel", "MeshBuildSettings", "MeshReductionSettings", "MeshUVChannelInfo", "AssetEditorOrbitCameraPosition", "SimpleMemberReference", 
-                    "CollisionResponse", "ResponseChannel", "StreamingTextureBuildInfo" ] # MaterialTextureInfo
+                    "CollisionResponse", "ResponseChannel", "StreamingTextureBuildInfo", "BuilderPoly", "PostProcessSettings", "LevelViewportInfo", "MaterialProxySettings", "MeshProxySettings",
+                    "MeshMergingSettings", "HierarchicalSimplification", "Timeline", "TimelineFloatTrack" } # MaterialTextureInfo
 prop_table_blacklist = { "MaterialTextureInfo" }
+struct_map = { "Vector":FVector, "Rotator":FVector, "Vector4":FVector4, "IntPoint":FIntPoint, "Quat":FQuat, "Box":FBox, "Color":FColor, "LinearColor":FLinearColor, "BoxSphereBounds":FBoxSphereBounds }
 
 class ArrayDesc:
     def __init__(self, f, b32=True):
@@ -226,31 +232,27 @@ class UProperty:
                 p = f.Position()
                 match self.struct_type:
                     case "Guid": self.value = f.ReadGuid()
-                    case "Vector" | "Rotator": self.value = f.ReadStructure(FVector) #if header: self.guid = asset.TryReadPropertyGuid()
-                    case "Quat": self.value = f.ReadStructure(FQuat)
-                    case "Box": self.value = f.ReadStructure(FBox)
-                    case "Color": self.value = f.ReadStructure(FColor)
-                    case "LinearColor": self.value = f.ReadStructure(FLinearColor)
-                    case "BoxSphereBounds": self.value = f.ReadStructure(FBoxSphereBounds)
+                    case "ExpressionInput": self.value = FExpressionInput(asset)
                     case "ColorMaterialInput" | "ScalarMaterialInput" | "VectorMaterialInput":
                         p = f.Position()
                         self.value = asset.GetExport(f.ReadInt32())# TODO: other data is default value?
                         f.Seek(p + self.len)
-                    case "ExpressionInput": self.value = FExpressionInput(asset)
                     case _:
-                        if self.struct_type in prop_table_types:
-                            self.value = Properties().Read(asset)
+                        structure = struct_map.get(self.struct_type)
+                        if structure: self.value = f.ReadStructure(structure)
+                        elif self.struct_type in prop_table_types: self.value = Properties().Read(asset)
                         else:
                             load_raw = not try_unknown_structs
                             if try_unknown_structs:
                                 p = f.Position()
                                 try:
                                     self.value = Properties().Read(asset)
-                                    if self.struct_type not in prop_table_blacklist:
-                                        prop_table_types.append(self.struct_type)
+                                    if self.struct_type not in prop_table_blacklist and f.Position() - (p + self.len) == 0:
+                                        prop_table_types.add(self.struct_type)
                                         if logging:
                                             print(f"Unknown Struct \"{self.struct_type}\" is probably a property table")
-                                except:
+                                except Exception as e:
+                                    print(f"{self.struct_type} Struct Error: {e}")
                                     f.Seek(p)
                                     load_raw = True
                                     pass
@@ -365,14 +367,11 @@ class UProperty:
                     self.enum_type = f.ReadFName(asset.names).str
                     self.guid = asset.TryReadPropertyGuid()
                 self.value = f.ReadFName(asset.names).FullName()
-            case "TextProperty":
-                if header: self.guid = asset.TryReadPropertyGuid()
-                self.value = [x for x in f.ReadBytes(self.len)]
             case "MulticastDelegateProperty":
                 if header: self.guid = asset.TryReadPropertyGuid()
                 self.value = []
                 for i in range(f.ReadInt32()): self.value.append((f.ReadInt32(), f.ReadFName(asset.names).FullName()))
-            case "MulticastSparseDelegateProperty":
+            case "TextProperty" | "MulticastSparseDelegateProperty" | "DelegateProperty":
                 if header: self.guid = asset.TryReadPropertyGuid()
                 self.value = [x for x in f.ReadBytes(self.len)]
             case _: raise Exception(f"Uknown Property Type \"{self.type}\"")
