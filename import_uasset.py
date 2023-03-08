@@ -20,42 +20,42 @@ class ByteStream:
     def Seek(self, offset, mode=io.SEEK_SET): self.byte_stream.seek(offset, mode)
     def Position(self): return self.byte_stream.tell()
     
-    def ReadString(self, count, stopOnNull=False): return self.ReadBytes(count).decode('utf-8',errors='ignore').rstrip('\0')
+    def ReadString(self, count, stopOnNull=False): return self.byte_stream.read(count).decode('utf-8',errors='ignore').rstrip('\0')
     def ReadString16(self, count, stopOnNull=False):
         if stopOnNull:
             s = ""
             for i in range(2*count):
-                char = self.ReadBytes(2)
+                char = self.byte_stream.read(2)
                 if char == b'\x00\x00': break
                 s += char.decode('utf-16',errors='ignore')
             return s
-        else: return self.ReadBytes(2*count).decode('utf-16',errors='ignore').rstrip('\0')
+        else: return self.byte_stream.read(2*count).decode('utf-16',errors='ignore').rstrip('\0')
     
     def ReadBool(self): return self.ReadInt8() == 1
     def ReadBool32(self): return self.ReadInt32() == 1
 
-    def ReadInt8(self) -> int: return unpack('b',self.ReadBytes(1))[0]
-    def ReadInt16(self) -> int: return unpack('h',self.ReadBytes(2))[0]
-    def ReadInt32(self) -> int: return unpack('i',self.ReadBytes(4))[0]
-    def ReadInt64(self) -> int: return unpack('q',self.ReadBytes(8))[0]
+    def ReadInt8(self) -> int: return unpack('b',self.byte_stream.read(1))[0]
+    def ReadInt16(self) -> int: return unpack('h',self.byte_stream.read(2))[0]
+    def ReadInt32(self) -> int: return unpack('i',self.byte_stream.read(4))[0]
+    def ReadInt64(self) -> int: return unpack('q',self.byte_stream.read(8))[0]
 
-    def ReadUInt8(self) -> int: return unpack('B',self.ReadBytes(1))[0]
-    def ReadUInt16(self) -> int: return unpack('H',self.ReadBytes(2))[0]
-    def ReadUInt32(self) -> int: return unpack('I',self.ReadBytes(4))[0]
-    def ReadUInt64(self) -> int: return unpack('Q',self.ReadBytes(8))[0]
+    def ReadUInt8(self) -> int: return unpack('B',self.byte_stream.read(1))[0]
+    def ReadUInt16(self) -> int: return unpack('H',self.byte_stream.read(2))[0]
+    def ReadUInt32(self) -> int: return unpack('I',self.byte_stream.read(4))[0]
+    def ReadUInt64(self) -> int: return unpack('Q',self.byte_stream.read(8))[0]
 
-    def ReadFloat(self) -> float: return unpack('f',self.ReadBytes(4))[0]
-    def ReadDouble(self) -> float: return unpack('d',self.ReadBytes(8))[0]
-    def ReadStruct(self, format, count): return unpack(format,self.ReadBytes(count))
+    def ReadFloat(self) -> float: return unpack('f',self.byte_stream.read(4))[0]
+    def ReadDouble(self) -> float: return unpack('d',self.byte_stream.read(8))[0]
+    def ReadStruct(self, format:str, count): return unpack(format,self.byte_stream.read(count))
 
     def ReadIntBool(self): return self.ReadInt32() == 1
 
-    def ReadStructure(self, ty : Structure): return ty.from_buffer_copy(self.byte_stream.read(sizeof(ty)))
-    def ReadGuid(self): return uuid.UUID(bytes_le=self.ReadBytes(16))
+    def ReadStructure(self, ty:Structure): return ty.from_buffer_copy(self.byte_stream.read(sizeof(ty)))
+    def ReadGuid(self): return uuid.UUID(bytes_le=self.byte_stream.read(16))
     def ReadFString(self):
         length = self.ReadInt32()
-        if length < 0: return self.ReadBytes(-2*length)[:-2].decode('utf-16')
-        else: return self.ReadBytes(length)[:-1].decode('ascii')
+        if length < 0: return self.byte_stream.read(-2*length)[:-2].decode('utf-16')
+        else: return self.byte_stream.read(length)[:-1].decode('ascii')
     def ReadFName(self, names): return FName(self, names)
 def StructToString(struct, names=True):
     structStr = ""
@@ -74,7 +74,8 @@ class PrintableStruct(Structure):
 
 class FName:
     def __init__(self, f:ByteStream, names):
-        i_name, self.i = (f.ReadInt32(), f.ReadInt32())
+        #i_name, self.i = (f.ReadInt32(), f.ReadInt32()) # ~5100ms
+        i_name, self.i = f.ReadStruct('ii',8) # ~4600ms
         self.str = names[i_name]
     def FullName(self) -> str: return f"{self.str}_{self.i - 1}" if self.i > 0 else self.str
     def __str__(self) -> str: return self.FullName()
@@ -121,9 +122,11 @@ prop_table_blacklist = { "MaterialTextureInfo" }
 struct_map = { "Vector":FVector, "Rotator":FVector, "Vector4":FVector4, "IntPoint":FIntPoint, "Quat":FQuat, "Box":FBox, "Color":FColor, "LinearColor":FLinearColor, "BoxSphereBounds":FBoxSphereBounds }
 
 class ArrayDesc:
-    def __init__(self, f, b32=True):
-        if b32: self.count, self.offset = (f.ReadInt32(), f.ReadInt32())
-        else: self.count, self.offset = (f.ReadInt64(), f.ReadInt64())
+    def __init__(self, f:ByteStream, b32=True):
+        #if b32: self.count, self.offset = (f.ReadInt32(), f.ReadInt32())
+        #else: self.count, self.offset = (f.ReadInt64(), f.ReadInt64())
+        if b32: self.count, self.offset = f.ReadStruct("ii", 8)
+        else: self.count, self.offset = f.ReadStruct("qq", 16)
     def TrySeek(self, f:ByteStream) -> bool:
         valid = self.offset > 0 and self.count > 0
         if valid: f.Seek(self.offset)
