@@ -31,7 +31,7 @@ class ByteStream:
             return s
         else: return self.byte_stream.read(2*count).decode('utf-16',errors='ignore').rstrip('\0')
     
-    def ReadBool(self): return self.ReadInt8() == 1
+    def ReadBool(self): return unpack('?',self.byte_stream.read(1))[0]
     def ReadBool32(self): return self.ReadInt32() == 1
 
     def ReadInt8(self) -> int: return unpack('b',self.byte_stream.read(1))[0]
