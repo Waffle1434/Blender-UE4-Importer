@@ -6,7 +6,7 @@ from mathutils import *
 
 project_dir = r"F:\Projects\Unreal Projects\Assets"
 logging = True
-try_unknown_structs = True
+try_unknown_structs = False
 
 project_dir = os.path.normpath(project_dir)
 
