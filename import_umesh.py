@@ -90,6 +90,7 @@ def ImportStaticMesh(self:Export, import_materials=True, logging=True):
                         mdl_bm.verts[wedge_indices[i_wedge+1]],
                         mdl_bm.verts[wedge_indices[i_wedge+2]]
                     ))
+                    loops = face.loops
                     i_poly = int(i_wedge / 3)
                     #face.smooth = face_smoothing_mask[i_poly] == 0
                     face.material_index = face_mat_indices[i_poly]
@@ -97,9 +98,13 @@ def ImportStaticMesh(self:Export, import_materials=True, logging=True):
                     for i_uv in range(len(uvs)):
                         uv_lay = uvs[i_uv]
                         w_uvs = wedge_uvs[i_uv]
-                        for i_loop in range(3):
-                            uv = w_uvs[i_wedge + i_loop]
-                            face.loops[i_loop][uv_lay].uv = (uv.x, 1-uv.y)
+                        
+                        uv1 = w_uvs[i_wedge + 0]
+                        uv2 = w_uvs[i_wedge + 1]
+                        uv3 = w_uvs[i_wedge + 2]
+                        loops[0][uv_lay].uv = (uv1.x, 1-uv1.y)
+                        loops[1][uv_lay].uv = (uv2.x, 1-uv2.y)
+                        loops[2][uv_lay].uv = (uv3.x, 1-uv3.y)
                 
                 for i_wn in range(0, len(wedge_indices)): spl_norms.append(wedge_normals[i_wn].ToVectorPos())
 
