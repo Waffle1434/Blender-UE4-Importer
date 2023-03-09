@@ -154,6 +154,8 @@ if __name__ != "import_umap":
     importlib.reload(import_uasset)
     importlib.reload(import_umat)
     importlib.reload(import_umesh)
+    sys.settrace(None) # Disable debugging for faster runtime
+
     #LoadUMap(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary.umap", False)
     LoadUMap(r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\Example_Stationary.umap", True, True)
     print("Done")
