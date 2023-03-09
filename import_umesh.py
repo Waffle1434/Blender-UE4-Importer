@@ -72,7 +72,7 @@ def ImportStaticMesh(self:Export, import_materials=True, logging=True):
                 if version >= 1: mat_index_to_import_index = f.ReadStructure(c_int32 * f.ReadInt32())
 
                 mdl_bm = bmesh.new()
-                for pos in vertices: mdl_bm.verts.new(pos.ToVectorPos())
+                for pos in vertices: mdl_bm.verts.new(Vector((pos.y, pos.x, pos.z)))
                 mdl_bm.verts.ensure_lookup_table()
                 
                 uvs = []
@@ -106,7 +106,9 @@ def ImportStaticMesh(self:Export, import_materials=True, logging=True):
                         loops[1][uv_lay].uv = (uv2.x, 1-uv2.y)
                         loops[2][uv_lay].uv = (uv3.x, 1-uv3.y)
                 
-                for i_wn in range(0, len(wedge_indices)): spl_norms.append(wedge_normals[i_wn].ToVectorPos())
+                for i_wn in range(0, len(wedge_indices)):
+                    n = wedge_normals[i_wn]
+                    spl_norms.append(Vector((n.y, n.x, n.z)))
 
                 mesh = bpy.data.meshes.new(self.object_name)
                 mdl_bm.to_mesh(mesh)
