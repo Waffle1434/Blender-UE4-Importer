@@ -59,16 +59,16 @@ def ImportStaticMesh(self:Export, import_materials=True, logging=True):
                 
                 # FRawMesh
                 version, version_licensee = (f.ReadInt32(), f.ReadInt32())
-                face_mat_indices = f.ReadStructure(c_int32 * f.ReadInt32())
+                face_mat_indices:list[c_int32] = f.ReadStructure(c_int32 * f.ReadInt32())
                 f.Seek(sizeof(c_uint32) * f.ReadInt32(), io.SEEK_CUR)#face_smoothing_mask = asset.f.ReadStructure(c_uint32 * asset.f.ReadInt32())
-                vertices = f.ReadStructure(FVector * f.ReadInt32())
+                vertices:list[FVector] = f.ReadStructure(FVector * f.ReadInt32())
                 wedge_indices = f.ReadStructure(c_int32 * f.ReadInt32())
                 f.Seek(sizeof(FVector) * f.ReadInt32(), io.SEEK_CUR)#wedge_tangents = asset.f.ReadStructure(FVector * asset.f.ReadInt32())
                 f.Seek(sizeof(FVector) * f.ReadInt32(), io.SEEK_CUR)#wedge_binormals = asset.f.ReadStructure(FVector * asset.f.ReadInt32())
-                wedge_normals = f.ReadStructure(FVector * f.ReadInt32())
-                wedge_uvs = []
+                wedge_normals:list[FVector] = f.ReadStructure(FVector * f.ReadInt32())
+                wedge_uvs:list[list[FVector2D]] = []
                 for i_uv in range(8): wedge_uvs.append(f.ReadStructure(FVector2D * f.ReadInt32()))
-                wedge_colors = f.ReadStructure(FColor * f.ReadInt32())
+                wedge_colors:list[FColor] = f.ReadStructure(FColor * f.ReadInt32())
                 if version >= 1: mat_index_to_import_index = f.ReadStructure(c_int32 * f.ReadInt32())
 
                 mdl_bm = bmesh.new()
