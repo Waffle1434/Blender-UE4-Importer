@@ -6,16 +6,14 @@ from mathutils import *
 cur_dir = os.path.dirname(__file__)
 if cur_dir not in sys.path: sys.path.append(cur_dir)
 import import_uasset
-from import_uasset import UAsset, Import, Export, Properties, ArchiveToProjectPath
+from import_uasset import UAsset, Import, Export, Properties, ArchiveToProjectPath, project_dir
 
-project_dir = r"F:\Projects\Unreal Projects\Assets"
 umodel_path = cur_dir + r"\umodel.exe"
 
 logging = True
 mute_ior = True
 mute_fresnel = True
 
-project_dir = os.path.normpath(project_dir)
 extract_dir = os.path.join(project_dir, "Export")
 extracted_imports = {}
 
