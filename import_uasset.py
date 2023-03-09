@@ -57,7 +57,7 @@ class ByteStream:
         if length < 0: return self.byte_stream.read(-2*length)[:-2].decode('utf-16')
         else: return self.byte_stream.read(length)[:-1].decode('ascii')
     def ReadFName(self, names):
-        i_name, i = self.ReadStruct('ii',8)
+        i_name, i = unpack('ii',self.byte_stream.read(8))
         fn = names[i_name]
         return f"{fn}_{i - 1}" if i > 0 else fn
 def StructToString(struct, names=True):
