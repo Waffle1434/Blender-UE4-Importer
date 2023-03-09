@@ -9,7 +9,6 @@ import import_uasset
 from import_uasset import UAsset, Import, Export, Properties, ArchiveToProjectPath, project_dir
 
 umodel_path = cur_dir + r"\umodel.exe"
-
 logging = True
 mute_ior = True
 mute_fresnel = True
@@ -25,7 +24,7 @@ with bpy.data.libraries.load(str(filepath)) as (data_from, data_to):
 
 
 def TryGetExtractedImport(imp:Import, extract_dir):
-    archive_path = imp.import_ref.object_name.str
+    archive_path = imp.import_ref.object_name
     extracted = extracted_imports.get(archive_path)
     if not extracted:
         match imp.class_name: # TODO: unify
@@ -135,7 +134,7 @@ def SetupNode(node_tree, name, mapping, node_data): # TODO: inline
     return node
 def SetNodePos(node, param_x, param_y, params:Properties): node.location = (params.TryGetValue(param_x,0), -params.TryGetValue(param_y,0))
 def CreateNode(exp:Export, mat, nodes_data, graph_data, mat_mesh):
-    name = exp.object_name.FullName()
+    name = exp.object_name
     classname = exp.export_class_type # TODO: inline?
     nodes_data[name] = node_data = NodeData(exp)
     params = exp.properties
@@ -143,7 +142,7 @@ def CreateNode(exp:Export, mat, nodes_data, graph_data, mat_mesh):
     if classname in class_blacklist: return None # TODO: iterate material expression array instead
 
     if classname == 'MaterialExpressionMaterialFunctionCall': # TODO: import subtree from unreal directory
-        classname = params.TryGetValue('MaterialFunction').object_name.FullName()
+        classname = params.TryGetValue('MaterialFunction').object_name
     node_data.classname = classname
 
     mapping = UE2BlenderNode_dict.get(classname)
@@ -187,13 +186,13 @@ def CreateNode(exp:Export, mat, nodes_data, graph_data, mat_mesh):
                     node.image = tex
                     if params.TryGetValue('SamplerType') == 'SAMPLERTYPE_Normal':
                         node.image.colorspace_settings.name, node.interpolation = ('Non-Color', 'Smart')
-                else: print(f"Missing Texture \"{tex_imp.import_ref.object_name.str}\"")
+                else: print(f"Missing Texture \"{tex_imp.import_ref.object_name}\"")
     expr_guid = params.TryGetValue('ExpressionGUID')
     if expr_guid: graph_data.node_guids[expr_guid] = node_data
     return node_data
 def LinkSocket(mat, nodes_data, node_data, expr, property, socket_mapping):
     link_node_exp = expr.value.node if expr.struct_type == 'ExpressionInput' else expr.value
-    link_node_name = link_node_exp.object_name.FullName()
+    link_node_name = link_node_exp.object_name
     if link_node_name in nodes_data:
         link_node_data = nodes_data[link_node_name]
         link_node_type = link_node_data.classname
@@ -238,7 +237,7 @@ def ImportUMaterial(filepath, mat_name=None, mat_mesh=None): # TODO: return asse
                     graph_data = GraphData() # TODO: replace with attributes on export?
                     nodes_data = graph_data.nodes_data
 
-                    if not mat_name: mat_name = exp.object_name.FullName()
+                    if not mat_name: mat_name = exp.object_name
                     mat = bpy.data.materials.new(mat_name)
                     mat.use_nodes = True
                     mat["UAsset"] = asset.f.byte_stream.name
@@ -293,8 +292,8 @@ def ImportUMaterial(filepath, mat_name=None, mat_mesh=None): # TODO: return asse
                     if ior.is_linked: ior.links[0].is_muted = mute_ior
                 case 'MaterialInstanceConstant':
                     mat_parent = params.TryGetValue('Parent')
-                    mat_path = ArchiveToProjectPath(mat_parent.import_ref.object_name.FullName())
-                    if not mat_name: mat_name = exp.object_name.FullName() # TODO: unify
+                    mat_path = ArchiveToProjectPath(mat_parent.import_ref.object_name)
+                    if not mat_name: mat_name = exp.object_name # TODO: unify
                     mat, graph_data = ImportUMaterial(mat_path, mat_name, mat_mesh) # TODO: handle not found
 
                     for param in params.TryGetValue('ScalarParameterValues', ()):
@@ -314,14 +313,14 @@ def ImportUMaterial(filepath, mat_name=None, mat_mesh=None): # TODO: return asse
                                 node = graph_data.node_guids.get(param.value.TryGetValue('ExpressionGUID')).node
                                 if node.image: tex.colorspace_settings.name = node.image.colorspace_settings.name
                                 node.image = tex
-                            else: print(f"Missing Texture \"{tex_imp.import_ref.object_name.str}\"")
+                            else: print(f"Missing Texture \"{tex_imp.import_ref.object_name}\"")
     
     if logging: print(f"Imported {mat.name}: {(time.time() - t0) * 1000:.2f}ms")
     return (mat, graph_data)
 def TryGetUMaterialImport(mat_imp:Import, mat_mesh):
-    mat = bpy.data.materials.get(mat_imp.object_name.FullName())
+    mat = bpy.data.materials.get(mat_imp.object_name)
     if not mat:
-        umat_path = ArchiveToProjectPath(mat_imp.import_ref.object_name.FullName())
+        umat_path = ArchiveToProjectPath(mat_imp.import_ref.object_name)
         mat, graph_data = ImportUMaterial(umat_path, mat_mesh=mat_mesh)
     return mat
 

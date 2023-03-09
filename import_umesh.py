@@ -101,7 +101,7 @@ def ImportStaticMesh(self:Export, import_materials=True, logging=True):
                             uv = w_uvs[i_wedge + i_loop]
                             face.loops[i_loop][uv_lay].uv = (uv.x, -uv.y)
                 
-                mesh = bpy.data.meshes.new(self.object_name.str)
+                mesh = bpy.data.meshes.new(self.object_name)
                 mdl_bm.to_mesh(mesh)
                 mesh.normals_split_custom_set(spl_norms)
                 mesh.use_auto_smooth = True

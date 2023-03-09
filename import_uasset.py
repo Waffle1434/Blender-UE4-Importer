@@ -56,7 +56,10 @@ class ByteStream:
         length = self.ReadInt32()
         if length < 0: return self.byte_stream.read(-2*length)[:-2].decode('utf-16')
         else: return self.byte_stream.read(length)[:-1].decode('ascii')
-    def ReadFName(self, names): return FName(self, names)
+    def ReadFName(self, names):
+        i_name, i = self.ReadStruct('ii',8)
+        fn = names[i_name]
+        return f"{fn}_{i - 1}" if i > 0 else fn
 def StructToString(struct, names=True):
     structStr = ""
     comma = False
@@ -72,14 +75,6 @@ class PrintableStruct(Structure):
     def __str__(self): return StructToString(self)
     def __repr__(self): return str(self)
 
-class FName:
-    def __init__(self, f:ByteStream, names):
-        #i_name, self.i = (f.ReadInt32(), f.ReadInt32()) # ~5100ms
-        i_name, self.i = f.ReadStruct('ii',8) # ~4600ms
-        self.str = names[i_name]
-    def FullName(self) -> str: return f"{self.str}_{self.i - 1}" if self.i > 0 else self.str
-    def __str__(self) -> str: return self.FullName()
-    def __repr__(self) -> str: return str(self)
 class FExpressionInput:
     def __init__(self, asset:UAsset, editor=True):
         self.node = asset.GetExport(asset.f.ReadInt32()) if editor else None
@@ -142,8 +137,8 @@ class EngineVersion:
     def Read(f): return EngineVersion(f.ReadUInt16(), f.ReadUInt16(), f.ReadUInt16(), f.ReadUInt32(), f.ReadFString())
 class Import: #FObjectImport
     def __init__(self, asset:UAsset, editor=True): # ObjectResource.cpp
-        self.class_package = asset.f.ReadFName(asset.names).str
-        self.class_name = asset.f.ReadFName(asset.names).str
+        self.class_package = asset.f.ReadFName(asset.names)
+        self.class_name = asset.f.ReadFName(asset.names)
         self.outer_index = asset.f.ReadInt32() # TODO: don't store
         self.object_name = asset.f.ReadFName(asset.names)
         if editor and asset.summary.version_ue4 >= 520: self.package_name = asset.f.ReadFName(asset.names)
@@ -177,7 +172,7 @@ class Export: #FObjectExport
         
         self.properties = None
         self.export_class = asset.DecodePackageIndex(self.class_index)
-        self.export_class_type = self.export_class.object_name.str if self.export_class else None
+        self.export_class_type = self.export_class.object_name if self.export_class else None
     def __repr__(self) -> str: return f"{self.object_name} [{len(self.properties) if self.properties != None else 'Unread'}]"
     def ReadProperties(self, read_children=True, read_extras=True):
         if self.properties: return
@@ -214,10 +209,10 @@ class UProperty:
     def __repr__(self) -> str: return f"{self.name}({self.struct_type if hasattr(self,'struct_type') else self.type}) = {self.value}"
     def TryRead(self, asset:UAsset, header=True, read_children=True):
         f = asset.f
-        self.name = f.ReadFName(asset.names).FullName()
+        self.name = f.ReadFName(asset.names)
         if self.name == "None": return None
 
-        self.type = f.ReadFName(asset.names).str
+        self.type = f.ReadFName(asset.names)
         self.len = f.ReadInt32()
         self.i_dupe = f.ReadInt32()
         
@@ -229,7 +224,7 @@ class UProperty:
         match self.type:
             case "StructProperty":
                 if header:
-                    self.struct_type = f.ReadFName(asset.names).str
+                    self.struct_type = f.ReadFName(asset.names)
                     if asset.summary.version_ue4 >= 441: self.struct_guid = f.ReadGuid()
                     self.guid = asset.TryReadPropertyGuid()
 
@@ -275,18 +270,18 @@ class UProperty:
                 #if self.type == "MapProperty": f.ReadBytes(8)
 
                 if header:
-                    self.array_type = f.ReadFName(asset.names).str
+                    self.array_type = f.ReadFName(asset.names)
                     self.guid = asset.TryReadPropertyGuid()
                 element_count = f.ReadInt32()
                 if self.array_type == "StructProperty":
                     if asset.summary.version_ue4 >= 500:
-                        self.array_name = f.ReadFName(asset.names).FullName()
+                        self.array_name = f.ReadFName(asset.names)
                         assert self.array_name != "None"
-                        self.array_el_type = f.ReadFName(asset.names).str
+                        self.array_el_type = f.ReadFName(asset.names)
                         assert self.array_el_type != "None"
                         assert self.array_type == self.array_el_type
                         self.array_size = f.ReadInt64()
-                        self.array_el_full_type = f.ReadFName(asset.names).str
+                        self.array_el_full_type = f.ReadFName(asset.names)
                         self.struct_guid = f.ReadGuid()
                         self.guid = asset.TryReadPropertyGuid()
                     else: raise
@@ -323,14 +318,14 @@ class UProperty:
                 self.value = [x for x in f.ReadBytes(self.len)]
                 #print("!")
                 if header:
-                    self.key_type = f.ReadFName(asset.names).str
-                    self.value_type = f.ReadFName(asset.names).str
+                    self.key_type = f.ReadFName(asset.names)
+                    self.value_type = f.ReadFName(asset.names)
             case "StrProperty":
                 if header: self.guid = asset.TryReadPropertyGuid()
                 self.value = f.ReadFString()
             case "NameProperty":
                 if header: self.guid = asset.TryReadPropertyGuid()
-                self.value = f.ReadFName(asset.names).FullName()
+                self.value = f.ReadFName(asset.names)
             case "ObjectProperty":
                 if header: self.guid = asset.TryReadPropertyGuid()
                 self.value = asset.DecodePackageIndex(f.ReadInt32())
@@ -343,11 +338,11 @@ class UProperty:
                 if header: self.guid = asset.TryReadPropertyGuid()
             case "ByteProperty":
                 if header:
-                    self.enum_type = f.ReadFName(asset.names).str
+                    self.enum_type = f.ReadFName(asset.names)
                     self.guid = asset.TryReadPropertyGuid()
                 match self.len:
                     case 1: self.value = f.ReadUInt8()
-                    case 8: self.value = f.ReadFName(asset.names).FullName()
+                    case 8: self.value = f.ReadFName(asset.names)
                     case _: raise
             case "Int8Property" | "Int16Property" | "IntProperty" | "Int64Property":
                 if header: self.guid = asset.TryReadPropertyGuid()
@@ -369,13 +364,13 @@ class UProperty:
                     case 8: self.value = f.ReadDouble()
             case "EnumProperty":
                 if header:
-                    self.enum_type = f.ReadFName(asset.names).str
+                    self.enum_type = f.ReadFName(asset.names)
                     self.guid = asset.TryReadPropertyGuid()
-                self.value = f.ReadFName(asset.names).FullName()
+                self.value = f.ReadFName(asset.names)
             case "MulticastDelegateProperty":
                 if header: self.guid = asset.TryReadPropertyGuid()
                 self.value = []
-                for i in range(f.ReadInt32()): self.value.append((f.ReadInt32(), f.ReadFName(asset.names).FullName()))
+                for i in range(f.ReadInt32()): self.value.append((f.ReadInt32(), f.ReadFName(asset.names)))
             case "TextProperty" | "MulticastSparseDelegateProperty" | "DelegateProperty":
                 if header: self.guid = asset.TryReadPropertyGuid()
                 self.value = [x for x in f.ReadBytes(self.len)]

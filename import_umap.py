@@ -3,6 +3,7 @@ from mathutils import *
 
 cur_dir = os.path.dirname(__file__)
 if cur_dir not in sys.path: sys.path.append(cur_dir)
+
 import import_uasset, import_umat, import_umesh
 from import_uasset import UAsset, Import, Export, Vector, Euler, ArchiveToProjectPath
 from import_umat import TryGetUMaterialImport
@@ -39,18 +40,18 @@ def TryGetStaticMesh(static_mesh_comp:Export, import_materials=True):
     mesh = None
     static_mesh = static_mesh_comp.properties.TryGetValue('StaticMesh')
     if static_mesh:
-        mesh_name = static_mesh.object_name.str
+        mesh_name = static_mesh.object_name
         mesh = bpy.data.meshes.get(mesh_name)
         if not mesh:
             mesh_import = static_mesh.import_ref
             if mesh_import:
-                mesh_path = ArchiveToProjectPath(mesh_import.object_name.str)
+                mesh_path = ArchiveToProjectPath(mesh_import.object_name)
                 mesh = ImportStaticMeshUAsset(mesh_path, import_materials)
                 if not mesh: print(f"Failed to get Static Mesh \"{mesh_path}\"")
         mat_overrides:list[Import] = static_mesh_comp.properties.TryGetValue('OverrideMaterials')
         if mat_overrides:
             hash = 1
-            for mat_override in mat_overrides: hash = zlib.adler32(str.encode(mat_override.value.object_name.FullName() if mat_override.value else "None"), hash)
+            for mat_override in mat_overrides: hash = zlib.adler32(str.encode(mat_override.value.object_name if mat_override.value else "None"), hash)
             override_mesh_name = f"{mesh_name}_{hash:X}"
             override_mesh = bpy.data.meshes.get(override_mesh_name)
             if override_mesh: mesh = override_mesh
@@ -68,7 +69,7 @@ def ProcessUMapExport(export:Export, import_meshes=True):
             static_mesh_comp = export.properties.TryGetValue('StaticMeshComponent') if import_meshes else None
             mesh = TryGetStaticMesh(static_mesh_comp) if static_mesh_comp else None
             
-            obj = SetupObject(bpy.context, export.object_name.str, mesh)
+            obj = SetupObject(bpy.context, export.object_name, mesh)
             TryApplyRootComponent(export, obj)
         case 'PointLight' | 'SpotLight':
             export.ReadProperties(True, False)
@@ -78,7 +79,7 @@ def ProcessUMapExport(export:Export, import_meshes=True):
                 case 'SpotLight': light_type = 'SPOT'
                 case _: raise # TODO: Sun Light
 
-            light = bpy.data.lights.new(export.object_name.str, light_type)
+            light = bpy.data.lights.new(export.object_name, light_type)
             light_obj = SetupObject(bpy.context, light.name, light)
             TryApplyRootComponent(export, light_obj, -90) # Blender lights are cursed, local Z- Forward, Y+ Up, X+ Right
             
@@ -103,7 +104,7 @@ def ProcessUMapExport(export:Export, import_meshes=True):
             if export.export_class.class_name == 'BlueprintGeneratedClass':
                 export.ReadProperties(True, False)
 
-                bp_obj = SetupObject(bpy.context, export.object_name.str)
+                bp_obj = SetupObject(bpy.context, export.object_name)
                 TryApplyRootComponent(export, bp_obj)
                 root_comp = export.properties.TryGetValue('RootComponent')
                 root_comp.bl_obj = bp_obj
@@ -112,24 +113,24 @@ def ProcessUMapExport(export:Export, import_meshes=True):
                 if bp_comps:
                     if not hasattr(export.asset, 'import_cache'): export.asset.import_cache = {}
 
-                    bp_path = export.export_class.import_ref.object_name.str
+                    bp_path = export.export_class.import_ref.object_name
                     bp_asset = export.asset.import_cache.get(bp_path)
                     if not bp_asset:
                         export.asset.import_cache[bp_path] = bp_asset = UAsset(ArchiveToProjectPath(bp_path))
                         bp_asset.Read(False)
                         bp_asset.name2exp = {}
-                        for exp in bp_asset.exports: bp_asset.name2exp[exp.object_name.str] = exp
+                        for exp in bp_asset.exports: bp_asset.name2exp[exp.object_name] = exp
                     
                     for comp in bp_comps:
                         child_export = comp.value
                         #ProcessUMapExport(child_export) # TODO? Can't, need to partly process gend_exp & child_export
                         if child_export.export_class_type == 'StaticMeshComponent':
-                            gend_exp = bp_asset.name2exp.get(f"{child_export.object_name.str}_GEN_VARIABLE")
+                            gend_exp = bp_asset.name2exp.get(f"{child_export.object_name}_GEN_VARIABLE")
                             if gend_exp:
                                 gend_exp.ReadProperties()
 
                                 mesh = TryGetStaticMesh(gend_exp) if import_meshes else None
-                                child_export.bl_obj = obj = SetupObject(bpy.context, child_export.object_name.str, mesh)
+                                child_export.bl_obj = obj = SetupObject(bpy.context, child_export.object_name, mesh)
 
                                 attach = child_export.properties.TryGetValue('AttachParent') # TODO: unify?
                                 if attach:
@@ -142,6 +143,7 @@ def LoadUMap(filepath, import_meshes=True):
     t0 = time.time()
     with UAsset(filepath) as asset:
         for export in asset.exports:
+            #export.ReadProperties(False, False)
             ProcessUMapExport(export, import_meshes)
     if hasattr(asset, 'import_cache'):
         for imp_asset in asset.import_cache.values(): imp_asset.Close()
@@ -151,6 +153,6 @@ if __name__ != "import_umap":
     importlib.reload(import_uasset)
     importlib.reload(import_umat)
     importlib.reload(import_umesh)
-    LoadUMap(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary.umap", True)
+    LoadUMap(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary.umap", False)
     #LoadUMap(r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\Example_Stationary.umap", True)
     print("Done")
