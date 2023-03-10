@@ -6,14 +6,13 @@ from mathutils import *
 cur_dir = os.path.dirname(__file__)
 if cur_dir not in sys.path: sys.path.append(cur_dir)
 import import_uasset
-from import_uasset import UAsset, Import, Export, Properties, ArchiveToProjectPath, project_dir
+from import_uasset import UAsset, Import, Export, Properties
 
 umodel_path = cur_dir + r"\umodel.exe"
 logging = True
 mute_ior = True
 mute_fresnel = True
 
-extract_dir = os.path.join(project_dir, "Export")
 extracted_imports = {}
 
 filepath = pathlib.Path(cur_dir) / "UE_nodes.blend"
@@ -32,7 +31,7 @@ def TryGetExtractedImport(imp:Import, extract_dir):
             case _: raise
         extracted_path = os.path.normpath(extract_dir + archive_path + f".{extension}")
         if not os.path.exists(extracted_path):
-            asset_path = ArchiveToProjectPath(archive_path)
+            asset_path = imp.asset.ToProjectPath(archive_path)
             extract_dir = os.path.join(extract_dir, "Game")
             subprocess.run(f"\"{umodel_path}\" -export -{extension} -out=\"{extract_dir}\" \"{asset_path}\"")
         match imp.class_name:
@@ -181,7 +180,7 @@ def CreateNode(exp:Export, mat, nodes_data, graph_data, mat_mesh):
         case 'MaterialExpressionTextureSampleParameter2D':
             tex_imp = params.TryGetValue('Texture')
             if tex_imp:
-                tex = TryGetExtractedImport(tex_imp, extract_dir)
+                tex = TryGetExtractedImport(tex_imp, exp.asset.extract_dir)
                 if tex:
                     node.image = tex
                     if params.TryGetValue('SamplerType') == 'SAMPLERTYPE_Normal':
@@ -292,7 +291,7 @@ def ImportUMaterial(filepath, mat_name=None, mat_mesh=None): # TODO: return asse
                     if ior.is_linked: ior.links[0].is_muted = mute_ior
                 case 'MaterialInstanceConstant':
                     mat_parent = params.TryGetValue('Parent')
-                    mat_path = ArchiveToProjectPath(mat_parent.import_ref.object_name)
+                    mat_path = asset.ToProjectPath(mat_parent.import_ref.object_name)
                     if not mat_name: mat_name = exp.object_name # TODO: unify
                     mat, graph_data = ImportUMaterial(mat_path, mat_name, mat_mesh) # TODO: handle not found
 
@@ -308,7 +307,7 @@ def ImportUMaterial(filepath, mat_name=None, mat_mesh=None): # TODO: return asse
                     for param in params.TryGetValue('TextureParameterValues', ()):
                         tex_imp = param.value.TryGetValue('ParameterValue')
                         if tex_imp:
-                            tex = TryGetExtractedImport(tex_imp, extract_dir) # TODO: reuse?
+                            tex = TryGetExtractedImport(tex_imp, exp.asset.extract_dir) # TODO: reuse?
                             if tex:
                                 node = graph_data.node_guids.get(param.value.TryGetValue('ExpressionGUID')).node
                                 if node.image: tex.colorspace_settings.name = node.image.colorspace_settings.name
@@ -320,7 +319,7 @@ def ImportUMaterial(filepath, mat_name=None, mat_mesh=None): # TODO: return asse
 def TryGetUMaterialImport(mat_imp:Import, mat_mesh):
     mat = bpy.data.materials.get(mat_imp.object_name)
     if not mat:
-        umat_path = ArchiveToProjectPath(mat_imp.import_ref.object_name)
+        umat_path = mat_imp.asset.ToProjectPath(mat_imp.import_ref.object_name)
         mat, graph_data = ImportUMaterial(umat_path, mat_mesh=mat_mesh)
     return mat
 

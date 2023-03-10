@@ -5,7 +5,7 @@ from mathutils import Vector
 cur_dir = os.path.dirname(__file__)
 if cur_dir not in sys.path: sys.path.append(cur_dir)
 import import_uasset, import_umat
-from import_uasset import UAsset, Export, FStripDataFlags, FVector, FVector2D, FColor, Euler, ArchiveToProjectPath
+from import_uasset import UAsset, Export, FStripDataFlags, FVector, FVector2D, FColor, Euler
 from import_umat import TryGetUMaterialImport
 
 def ImportStaticMesh(self:Export, import_materials=True, logging=True):

@@ -4,11 +4,8 @@ from struct import *
 from ctypes import *
 from mathutils import *
 
-project_dir = r"F:\Projects\Unreal Projects\Assets"
 logging = True
 try_unknown_structs = False
-
-project_dir = os.path.normpath(project_dir)
 
 class ByteStream:
     def __init__(self, byte_stream:io.BufferedReader): self.byte_stream = byte_stream
@@ -431,6 +428,9 @@ class USummary:
 class UAsset:
     def __init__(self, filepath:str, read_all=False):
         self.filepath = filepath
+        project_dir = filepath[:filepath.find("\\Content\\")]
+        self.project_dir = os.path.normpath(project_dir)
+        self.extract_dir = os.path.join(project_dir, "Export")
         self.read_all = read_all
     def __repr__(self) -> str: return f"\"{self.f.byte_stream.name}\", {len(self.imports)} Imports, {len(self.exports)} Exports"
     def GetImport(self, i) -> Import: return self.imports[-i - 1]
@@ -441,6 +441,7 @@ class UAsset:
         if i < 0: return self.GetImport(i)
         elif i > 0: return self.GetExport(i)
         else: return None #raise Exception("Invalid Package Index of 0")
+    def ToProjectPath(self, path:str): return os.path.join(self.project_dir, "Content", str(pathlib.Path(path).relative_to("\\Game"))) + ".uasset"
     def TryReadPropertyGuid(self) -> uuid.UUID: return self.f.ReadGuid() if self.summary.version_ue4 >= 503 and self.f.ReadBool() else None
     #def TryReadProperty(self): # TODO
     def Read(self, read_all=True): # PackageReader.cpp
@@ -472,8 +473,6 @@ class UAsset:
         self.Read(self.read_all)
         return self
     def __exit__(self, *args): self.Close()
-
-def ArchiveToProjectPath(path): return os.path.join(project_dir, "Content", str(pathlib.Path(path).relative_to("\\Game"))) + ".uasset"
 
 if __name__ != "import_uasset":
     #asset = UAsset(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Materials\M_Base_Trim.uasset")
