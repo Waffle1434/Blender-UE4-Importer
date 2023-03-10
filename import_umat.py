@@ -19,7 +19,7 @@ filepath = pathlib.Path(cur_dir) / "UE_nodes.blend"
 node_tree_path = filepath / "NodeTree"
 with bpy.data.libraries.load(str(filepath)) as (data_from, data_to):
     for node_group in data_from.node_groups:
-        bpy.ops.wm.link(filepath=str(node_tree_path / node_group), directory=str(node_tree_path), filename=node_group)
+        bpy.ops.wm.append(filepath=str(node_tree_path / node_group), directory=str(node_tree_path), filename=node_group)
 
 
 def TryGetExtractedImport(imp:Import, extract_dir):
