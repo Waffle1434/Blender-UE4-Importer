@@ -202,6 +202,12 @@ class Properties(dict):
     def TryGetValue(self, key:str, default=None):
         property = self.get(key)
         return property.value if property else default
+    def TryGetProperties(self, key:str):
+        export:Export = self.TryGetValue(key)
+        if export:
+            export.ReadProperties(False, False)
+            return export.properties
+        return None
 class UProperty:
     def __repr__(self) -> str: return f"{self.name}({self.struct_type if hasattr(self,'struct_type') else self.type}) = {self.value}"
     def TryRead(self, asset:UAsset, header=True, read_children=True):

@@ -17,7 +17,7 @@ def SetupObject(context, name, data=None):
     obj.rotation_mode = 'YXZ'
     context.collection.objects.link(obj)
     return obj
-def Transform(export:Export, obj, pitch_offset=0):
+def Transform(export:Export, obj, pitch_offset=0, scale=1):
     props = export.properties
 
     # Unreal: X+ Forward, Y+ Right, Z+ Up     Blender: X+ Right, Y+ Forward, Z+ Up
@@ -29,11 +29,12 @@ def Transform(export:Export, obj, pitch_offset=0):
     if rel_rot: obj.rotation_euler = Euler(((rel_rot.x+pitch_offset)*deg2rad, rel_rot.z*deg2rad, -rel_rot.y*deg2rad))
 
     rel_scale = props.TryGetValue('RelativeScale3D')
-    if rel_scale: obj.scale = Vector((rel_scale.y,rel_scale.x,rel_scale.z))
-def TryApplyRootComponent(export:Export, obj, pitch_offset=0):
-    root_exp = export.properties.TryGetValue('RootComponent')
+    if rel_scale: obj.scale = Vector((rel_scale.y,rel_scale.x,rel_scale.z)) * scale
+def TryApplyRootComponent(export:Export, obj, pitch_offset=0, scale=1):
+    root_exp:Export = export.properties.TryGetValue('RootComponent')
     if root_exp:
-        Transform(root_exp, obj, pitch_offset)
+        root_exp.ReadProperties(False, False)
+        Transform(root_exp, obj, pitch_offset, scale)
         return True
     return False
 def TryGetStaticMesh(static_mesh_comp:Export, import_materials=True):
@@ -101,6 +102,22 @@ def ProcessUMapExport(export:Export, import_meshes=True, import_materials=True):
                     inner_angle = light_props.TryGetValue('InnerConeAngle', 0)
                     light.spot_size = outer_angle * deg2rad
                     light.spot_blend = 1 - (inner_angle / outer_angle)
+        case 'BoxReflectionCapture':
+            export.ReadProperties(False, False)
+
+            probe = bpy.data.lightprobes.new(export.object_name, 'CUBE')
+            probe.influence_type = 'BOX'
+            probe.influence_distance = 1
+
+            cap_props = export.properties.TryGetProperties('CaptureComponent')
+            if cap_props:
+                box_props = cap_props.TryGetProperties('PreviewCaptureBox')
+                if box_props:
+                    box_ext = box_props.TryGetValue('BoxExtent')
+                    if box_ext: probe.falloff = 1 - max(box_ext.x, max(box_ext.y, box_ext.z))
+
+            obj = SetupObject(bpy.context, export.object_name, probe)
+            TryApplyRootComponent(export, obj, scale=0.01)
         case _:
             if export.export_class.class_name == 'BlueprintGeneratedClass':
                 export.ReadProperties(True, False)
