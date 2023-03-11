@@ -313,7 +313,10 @@ def TryGetUMaterialImport(mat_imp:Import, mat_mesh):
     mat = bpy.data.materials.get(mat_imp.object_name)
     if not mat:
         umat_path = mat_imp.asset.ToProjectPath(mat_imp.import_ref.object_name)
-        mat, graph_data = ImportUMaterial(umat_path, mat_mesh=mat_mesh)
+        try: mat, graph_data = ImportUMaterial(umat_path, mat_mesh=mat_mesh)
+        except Exception as e:
+            print(e)
+            pass
     return mat
 
 if __name__ != "import_umat":
