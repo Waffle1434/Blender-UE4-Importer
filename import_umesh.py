@@ -47,37 +47,47 @@ def ReadMeshBulkData(self:Export, asset:UAsset, f:import_uasset.ByteStream): # F
         for i_uv in range(len(wedge_uvs)):
             if len(wedge_uvs[i_uv]) > 0: uvs.append(mdl_bm.loops.layers.uv.new(f"UV{i_uv}"))
         
+        if len(wedge_colors) > 0:
+            col_lay = mdl_bm.loops.layers.color.new("Color") # data.color_attributes?
+
         spl_norms = []
         for i_wedge in range(0, len(wedge_indices), 3):
-            face = mdl_bm.faces.new((
-                mdl_bm.verts[wedge_indices[i_wedge]],
-                mdl_bm.verts[wedge_indices[i_wedge+1]],
-                mdl_bm.verts[wedge_indices[i_wedge+2]]
-            ))
-            loops = face.loops
-            i_poly = int(i_wedge / 3)
-            #face.smooth = face_smoothing_mask[i_poly] == 0
-            face.material_index = face_mat_indices[i_poly]
+            try:
+                face = mdl_bm.faces.new((
+                    mdl_bm.verts[wedge_indices[i_wedge]],
+                    mdl_bm.verts[wedge_indices[i_wedge+1]],
+                    mdl_bm.verts[wedge_indices[i_wedge+2]]
+                ))
+                loops = face.loops
+                i_poly = int(i_wedge / 3)
+                #face.smooth = face_smoothing_mask[i_poly] == 0
+                face.material_index = face_mat_indices[i_poly]
 
-            for i_uv in range(len(uvs)):
-                uv_lay = uvs[i_uv]
-                w_uvs = wedge_uvs[i_uv]
-                
-                uv1 = w_uvs[i_wedge + 0]
-                uv2 = w_uvs[i_wedge + 1]
-                uv3 = w_uvs[i_wedge + 2]
-                loops[0][uv_lay].uv = (uv1.x, 1-uv1.y)
-                loops[1][uv_lay].uv = (uv2.x, 1-uv2.y)
-                loops[2][uv_lay].uv = (uv3.x, 1-uv3.y)
+                #n = wedge_normals[i_wedge]
+                #spl_norms.append(Vector((n.y, n.x, n.z)))
+
+                for i_uv in range(len(uvs)):
+                    uv_lay = uvs[i_uv]
+                    w_uvs = wedge_uvs[i_uv]
+                    
+                    uv1 = w_uvs[i_wedge + 0]
+                    uv2 = w_uvs[i_wedge + 1]
+                    uv3 = w_uvs[i_wedge + 2]
+                    loops[0][uv_lay].uv = (uv1.x, 1-uv1.y)
+                    loops[1][uv_lay].uv = (uv2.x, 1-uv2.y)
+                    loops[2][uv_lay].uv = (uv3.x, 1-uv3.y)
+                if len(wedge_colors) > 0:
+                    col1 = wedge_colors[i_wedge + 0]
+                    col2 = wedge_colors[i_wedge + 1]
+                    col3 = wedge_colors[i_wedge + 2]
+                    loops[0][col_lay] = Vector((col1.r,col1.g,col1.b,col1.a)) / 255.0
+                    loops[1][col_lay] = Vector((col2.r,col2.g,col2.b,col2.a)) / 255.0
+                    loops[2][col_lay] = Vector((col3.r,col3.g,col3.b,col3.a)) / 255.0
+            except ValueError: pass # Face already exists
         
         for i_wn in range(0, len(wedge_indices)):
             n = wedge_normals[i_wn]
             spl_norms.append(Vector((n.y, n.x, n.z)))
-
-        if len(wedge_colors) > 0:
-            mdl_bm.loops.layers.color.new("Color") # data.color_attributes?
-            for i_wn in range(0, len(wedge_indices)):
-                c = wedge_colors[i_wn]
 
         mesh = bpy.data.meshes.new(self.object_name)
         mdl_bm.to_mesh(mesh)
@@ -161,6 +171,9 @@ if __name__ != "import_umesh":
 
     #filepath = r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Meshes\SM_Door_Small_A.uasset"
     filepath = r"F:\Projects\Unreal Projects\Assets\Content\VehicleVarietyPack\Meshes\SM_Truck_Box.uasset"
+    #filepath = r"F:\Projects\Unreal Projects\Assets\Content\VehicleVarietyPack\Meshes\SM_Hatchback.uasset"
+    #filepath = r"F:\Projects\Unreal Projects\Assets\Content\VehicleVarietyPack\Meshes\SM_Pickup.uasset"
+    #filepath = r"F:\Projects\Unreal Projects\Assets\Content\VehicleVarietyPack\Meshes\SM_SportsCar.uasset"
 
     mesh = ImportStaticMeshUAsset(filepath, False, True)
     bpy.context.collection.objects.link(bpy.data.objects.new(mesh.name, mesh))
