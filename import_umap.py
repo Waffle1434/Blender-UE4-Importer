@@ -7,7 +7,7 @@ cur_dir = os.path.dirname(__file__)
 if cur_dir not in sys.path: sys.path.append(cur_dir)
 
 import import_uasset, import_umat, import_umesh
-from import_uasset import UAsset, Import, Export, Vector, Euler
+from import_uasset import UAsset, Import, Export, Vector, Euler, FColor
 from import_umat import TryGetUMaterialImport
 from import_umesh import ImportStaticMeshUAsset
 
@@ -98,20 +98,19 @@ def ProcessUMapExport(export:Export, import_meshes=True, import_materials=True, 
             
             if export.export_class_type == 'DirectionalLight': light_obj.rotation_euler.rotate_axis('X', math.radians(90))
             
-            light_comp = export.properties.TryGetValue('LightComponent')
+            light_comp:Export = export.properties.TryGetValue('LightComponent')
             if light_comp:
                 light_props = light_comp.properties
-                light.energy = 0.01 * light_intensity * light_props.TryGetValue('Intensity') # pre 4.19 is unitless
-                color = light_props.TryGetValue('LightColor')
-                if color: light.color = Color((color.r,color.g,color.b)) / 255.0
-                cast = light_props.TryGetValue('CastShadows')
-                if cast != None:
-                    light.use_shadow = cast or force_shadows
-                    if not cast and hide_noncasting: light_obj.hide_viewport = light_obj.hide_render = True
+                light.energy = 0.01 * light_intensity * light_props.TryGetValue('Intensity', 5000) # pre 4.19 is unitless
+                color:FColor = light_props.TryGetValue('LightColor', FColor(255,255,255,255))
+                light.color = Color((color.r,color.g,color.b)) / 255.0
+                cast = light_props.TryGetValue('CastShadows', True)
+                light.use_shadow = cast or force_shadows
+                if not cast and hide_noncasting: light_obj.hide_viewport = light_obj.hide_render = True
                 light.shadow_soft_size = light_props.TryGetValue('SourceRadius', 0.05)
 
                 if light_type == 'SPOT':
-                    outer_angle = light_props.TryGetValue('OuterConeAngle')
+                    outer_angle = light_props.TryGetValue('OuterConeAngle', 44)
                     inner_angle = light_props.TryGetValue('InnerConeAngle', 0)
                     light.spot_size = 2 * light_angle_coef * outer_angle * deg2rad
                     light.spot_blend = 1 - (inner_angle / outer_angle)
@@ -196,14 +195,14 @@ class ImportUMap(bpy.types.Operator, ImportHelper):
     files:       CollectionProperty(type=bpy.types.OperatorFileListElement, options={'HIDDEN','SKIP_SAVE'})
     directory:   StringProperty(options={'HIDDEN'})
 
-    meshes:          BoolProperty(name="Meshes",        default=True)
-    materials:       BoolProperty(name="Materials",     default=True, description="Import Mesh Materials (this is usually the slowest part).")
-    lights_point:    BoolProperty(name="Point Lights",  default=True)
-    lights_spot:     BoolProperty(name="Spot Lights",   default=True)
-    cubemaps:        BoolProperty(name="Cubemaps",      default=True)
-    force_shadows:   BoolProperty(name="Force Shadows", default=False, description="Force all lights to cast shadows.")
-    light_intensity: FloatProperty(name="Light Brightness", default=1, description="Optional multiplier for light intensity.")
-    light_angle_coef: FloatProperty(name="Light Angle",     default=1, description="Optional multiplier for spotlight angle.")
+    meshes:           BoolProperty(name="Meshes",        default=True)
+    materials:        BoolProperty(name="Materials",     default=True, description="Import Mesh Materials (this is usually the slowest part).")
+    lights_point:     BoolProperty(name="Point Lights",  default=False)
+    lights_spot:      BoolProperty(name="Spot Lights",   default=True)
+    cubemaps:         BoolProperty(name="Cubemaps",      default=True)
+    force_shadows:    BoolProperty(name="Force Shadows", default=False, description="Force all lights to cast shadows.")
+    light_intensity:  FloatProperty(name="Light Brightness", default=1,   min=0, description="Optional multiplier for light intensity.")
+    light_angle_coef: FloatProperty(name="Light Angle",      default=1,   min=0, description="Optional multiplier for spotlight angle.")
 
     def execute(self, context):
         for file in self.files:
@@ -245,5 +244,6 @@ if __name__ != "import_umap":
 
     #LoadUMap(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary.umap", True, True)
     #LoadUMap(r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\Example_Stationary.umap", True, True)
-    LoadUMap(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Overview.umap", True, True)
+    #LoadUMap(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Overview.umap", True, True)
+    LoadUMap(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary_2.umap", True, True)
     print("Done")
