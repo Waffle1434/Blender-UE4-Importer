@@ -13,35 +13,27 @@ logging = True
 mute_ior = True
 mute_fresnel = True
 
-extracted_imports = {}
-
 filepath = pathlib.Path(cur_dir) / "UE_nodes.blend"
 node_tree_path = filepath / "NodeTree"
-with bpy.data.libraries.load(str(filepath)) as (data_from, data_to):
-    for node_group in data_from.node_groups:
-        bpy.ops.wm.append(filepath=str(node_tree_path / node_group), directory=str(node_tree_path), filename=node_group)
-
+def TryAppendNodeGroups():
+    if 'AdditiveSurface' not in bpy.data.node_groups:
+        with bpy.data.libraries.load(str(filepath)) as (data_from, data_to):
+            for node_group in data_from.node_groups:
+                bpy.ops.wm.append(filepath=str(node_tree_path / node_group), directory=str(node_tree_path), filename=node_group)
 
 def TryGetExtractedImport(imp:Import, extract_dir):
-    archive_path = imp.import_ref.object_name
-    extracted = extracted_imports.get(archive_path)
-    if not extracted:
-        match imp.class_name: # TODO: unify
-            case 'Texture2D': extension = "png"
-            case _: raise
-        extracted_path = os.path.normpath(extract_dir + archive_path + f".{extension}")
+    if not hasattr(imp, "extracted"):
+        archive_path = imp.import_ref.object_name
+        extracted_path = os.path.normpath(extract_dir + archive_path + ".png")
         if not os.path.exists(extracted_path):
             asset_path = imp.asset.ToProjectPath(archive_path)
             extract_dir = os.path.join(extract_dir, "Game")
-            subprocess.run(f"\"{umodel_path}\" -export -{extension} -out=\"{extract_dir}\" \"{asset_path}\"")
-        match imp.class_name:
-            case 'Texture2D':
-                try: extracted = bpy.data.images.load(extracted_path, check_existing=True)
-                except:
-                    extracted = None
-                    pass
-        extracted_imports[archive_path] = extracted
-    return extracted
+            subprocess.run(f"\"{umodel_path}\" -export -png -out=\"{extract_dir}\" \"{asset_path}\"")
+        try: imp.extracted = bpy.data.images.load(extracted_path, check_existing=True)
+        except:
+            imp.extracted = None
+            pass
+    return imp.extracted
 
 class UE2BlenderNodeMapping():
     def __init__(self, bl_idname, subtype=None, label=None, hide=True, inputs=None, outputs=None, color=None):
@@ -227,6 +219,7 @@ def ImportUMaterial(filepath, mat_name=None, mat_mesh=None): # TODO: return asse
     if not os.path.exists(filepath):
         print(f"Error: \"{filepath}\" Does Not Exist!")
         return (None, None)
+    TryAppendNodeGroups()
     with UAsset(filepath, True) as asset:
         for exp in asset.exports:
             classname = exp.export_class_type

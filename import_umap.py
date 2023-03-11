@@ -1,5 +1,7 @@
 import bpy, os, sys, math, importlib, time, zlib
 from mathutils import *
+from bpy.props import *
+from bpy_extras.io_utils import ImportHelper
 
 cur_dir = os.path.dirname(__file__)
 if cur_dir not in sys.path: sys.path.append(cur_dir)
@@ -64,7 +66,7 @@ def TryGetStaticMesh(static_mesh_comp:Export, import_materials=True):
                         mat_override = mat_overrides[i].value
                         if mat_override: mesh.materials[i] = TryGetUMaterialImport(mat_override, mat_mesh=mesh)
     return mesh
-def ProcessUMapExport(export:Export, import_meshes=True, import_materials=True):
+def ProcessUMapExport(export:Export, import_meshes=True, import_materials=True, import_lights_point=True, import_lights_spot=True, import_cubemaps=True, light_intensity=1, light_angle_coef=1):
     match export.export_class_type:
         case 'StaticMeshActor':
             export.ReadProperties(True, False)
@@ -74,12 +76,16 @@ def ProcessUMapExport(export:Export, import_meshes=True, import_materials=True):
             obj = SetupObject(bpy.context, export.object_name, mesh)
             TryApplyRootComponent(export, obj)
         case 'PointLight' | 'SpotLight':
-            export.ReadProperties(True, False)
-
             match export.export_class_type:
-                case 'PointLight': light_type = 'POINT'
-                case 'SpotLight': light_type = 'SPOT'
+                case 'PointLight':
+                    light_type = 'POINT'
+                    if not import_lights_point: return
+                case 'SpotLight':
+                    light_type = 'SPOT'
+                    if not import_lights_spot: return
                 case _: raise # TODO: Sun Light
+
+            export.ReadProperties(True, False)
 
             light = bpy.data.lights.new(export.object_name, light_type)
             light_obj = SetupObject(bpy.context, light.name, light)
@@ -88,7 +94,7 @@ def ProcessUMapExport(export:Export, import_meshes=True, import_materials=True):
             light_comp = export.properties.TryGetValue('LightComponent')
             if light_comp:
                 light_props = light_comp.properties
-                light.energy = light_props.TryGetValue('Intensity')
+                light.energy = 0.01 * light_intensity * light_props.TryGetValue('Intensity') # pre 4.19 is unitless
                 color = light_props.TryGetValue('LightColor')
                 if color: light.color = Color((color.r,color.g,color.b)) / 255.0
                 cast = light_props.TryGetValue('CastShadows')
@@ -100,9 +106,10 @@ def ProcessUMapExport(export:Export, import_meshes=True, import_materials=True):
                 if light_type == 'SPOT':
                     outer_angle = light_props.TryGetValue('OuterConeAngle')
                     inner_angle = light_props.TryGetValue('InnerConeAngle', 0)
-                    light.spot_size = outer_angle * deg2rad
+                    light.spot_size = 2 * light_angle_coef * outer_angle * deg2rad
                     light.spot_blend = 1 - (inner_angle / outer_angle)
         case 'BoxReflectionCapture':
+            if not import_cubemaps: return
             export.ReadProperties(False, False)
 
             probe = bpy.data.lightprobes.new(export.object_name, 'CUBE')
@@ -157,15 +164,67 @@ def ProcessUMapExport(export:Export, import_meshes=True, import_materials=True):
 
                                 Transform(gend_exp, obj)
                 return
-def LoadUMap(filepath, import_meshes=True, import_materials=True):
+def LoadUMap(filepath, import_meshes=True, import_materials=True, import_lights_point=True, import_lights_spot=True, import_cubemaps=True, light_intensity=1, light_angle_coef=1):
     t0 = time.time()
     with UAsset(filepath) as asset:
-        for export in asset.exports:
+        bpy.context.window_manager.progress_begin(0, len(asset.exports))
+        for i, export in enumerate(asset.exports):
             #export.ReadProperties(False, False)
-            ProcessUMapExport(export, import_meshes, import_materials)
+            ProcessUMapExport(export, import_meshes, import_materials, import_lights_point, import_lights_spot, import_cubemaps, light_intensity, light_angle_coef)
+            bpy.context.window_manager.progress_update(i)
+        bpy.context.window_manager.progress_end()
     if hasattr(asset, 'import_cache'):
         for imp_asset in asset.import_cache.values(): imp_asset.Close()
     print(f"Imported {asset}: {(time.time() - t0) * 1000:.2f}ms")
+
+def menu_import_umap(self, context): self.layout.operator(ImportUMap.bl_idname, text="Unreal Engine Map (.umap)")
+class ImportUMap(bpy.types.Operator, ImportHelper):
+    """Import Unreal Engine umap File"""
+    bl_idname    = "import.umap"
+    bl_label     = "Import"
+    filename_ext = ".umap"
+    filter_glob: StringProperty(default="*.umap", options={'HIDDEN'}, maxlen=255)
+    files:       CollectionProperty(type=bpy.types.OperatorFileListElement, options={'HIDDEN','SKIP_SAVE'})
+    directory:   StringProperty(options={'HIDDEN'})
+
+    meshes:          BoolProperty(name="Meshes",       default=True)
+    materials:       BoolProperty(name="Materials",    default=True, description="Import Mesh Materials (this is usually the slowest part).")
+    lights_point:    BoolProperty(name="Point Lights", default=True)
+    lights_spot:     BoolProperty(name="Spot Lights",  default=True)
+    cubemaps:        BoolProperty(name="Cubemaps",     default=True)
+    light_intensity: FloatProperty(name="Light Brightness", default=1, description="Optional multiplier for light intensity.")
+    light_angle_coef: FloatProperty(name="Light Angle", default=1, description="Optional multiplier for spotlight angle")
+
+    def execute(self, context):
+        for file in self.files:
+            if file.name != "": LoadUMap(self.directory + file.name, self.meshes, self.materials, self.lights_point, self.lights_spot, self.cubemaps, self.light_intensity, self.light_angle_coef)
+        return {'FINISHED'}
+
+reg_classes = ( ImportUMap, )
+persist_vars = bpy.app.driver_namespace
+
+def registerDrawEvent(event, item):
+    id = event.bl_rna.name
+    handles = persist_vars.get(id, [])
+    event.append(item)
+    handles.append(item)
+    persist_vars[id] = handles
+def removeDrawEvents(event):
+    for item in persist_vars.get(event.bl_rna.name,[]):
+        try: event.remove(item)
+        except: pass
+def register():
+    for cls in reg_classes: bpy.utils.register_class(cls)
+    registerDrawEvent(bpy.types.TOPBAR_MT_file_import, menu_import_umap)
+def unregister():
+    for cls in reg_classes:
+        try: bpy.utils.unregister_class(cls)
+        except: pass
+    removeDrawEvents(bpy.types.TOPBAR_MT_file_import)
+
+try: unregister()
+except: pass
+register()
 
 if __name__ != "import_umap":
     importlib.reload(import_uasset)
@@ -173,6 +232,6 @@ if __name__ != "import_umap":
     importlib.reload(import_umesh)
     #sys.settrace(None) # Disable debugging for faster runtime
 
-    LoadUMap(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary.umap", True, True)
+    #LoadUMap(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary.umap", True, True)
     #LoadUMap(r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\Example_Stationary.umap", True, True)
     print("Done")
