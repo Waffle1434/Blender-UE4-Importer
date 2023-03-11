@@ -66,7 +66,8 @@ def TryGetStaticMesh(static_mesh_comp:Export, import_materials=True):
                         mat_override = mat_overrides[i].value
                         if mat_override: mesh.materials[i] = TryGetUMaterialImport(mat_override, mat_mesh=mesh)
     return mesh
-def ProcessUMapExport(export:Export, import_meshes=True, import_materials=True, import_lights_point=True, import_lights_spot=True, import_cubemaps=True, light_intensity=1, light_angle_coef=1):
+def ProcessUMapExport(export:Export, import_meshes=True, import_materials=True, import_lights_point=True, import_lights_spot=True, import_cubemaps=True, 
+                      force_shadows=False, light_intensity=1, light_angle_coef=1):
     match export.export_class_type:
         case 'StaticMeshActor':
             export.ReadProperties(True, False)
@@ -99,7 +100,7 @@ def ProcessUMapExport(export:Export, import_meshes=True, import_materials=True, 
                 if color: light.color = Color((color.r,color.g,color.b)) / 255.0
                 cast = light_props.TryGetValue('CastShadows')
                 if cast != None:
-                    light.use_shadow = cast
+                    light.use_shadow = cast or force_shadows
                     if not cast and hide_noncasting: light_obj.hide_viewport = light_obj.hide_render = True
                 light.shadow_soft_size = light_props.TryGetValue('SourceRadius', 0.05)
 
@@ -164,13 +165,14 @@ def ProcessUMapExport(export:Export, import_meshes=True, import_materials=True, 
 
                                 Transform(gend_exp, obj)
                 return
-def LoadUMap(filepath, import_meshes=True, import_materials=True, import_lights_point=True, import_lights_spot=True, import_cubemaps=True, light_intensity=1, light_angle_coef=1):
+def LoadUMap(filepath, import_meshes=True, import_materials=True, import_lights_point=True, import_lights_spot=True, import_cubemaps=True, 
+             force_shadows=False, light_intensity=1, light_angle_coef=1):
     t0 = time.time()
     with UAsset(filepath) as asset:
         bpy.context.window_manager.progress_begin(0, len(asset.exports))
         for i, export in enumerate(asset.exports):
             #export.ReadProperties(False, False)
-            ProcessUMapExport(export, import_meshes, import_materials, import_lights_point, import_lights_spot, import_cubemaps, light_intensity, light_angle_coef)
+            ProcessUMapExport(export, import_meshes, import_materials, import_lights_point, import_lights_spot, import_cubemaps, force_shadows, light_intensity, light_angle_coef)
             bpy.context.window_manager.progress_update(i)
         bpy.context.window_manager.progress_end()
     if hasattr(asset, 'import_cache'):
@@ -187,17 +189,19 @@ class ImportUMap(bpy.types.Operator, ImportHelper):
     files:       CollectionProperty(type=bpy.types.OperatorFileListElement, options={'HIDDEN','SKIP_SAVE'})
     directory:   StringProperty(options={'HIDDEN'})
 
-    meshes:          BoolProperty(name="Meshes",       default=True)
-    materials:       BoolProperty(name="Materials",    default=True, description="Import Mesh Materials (this is usually the slowest part).")
-    lights_point:    BoolProperty(name="Point Lights", default=True)
-    lights_spot:     BoolProperty(name="Spot Lights",  default=True)
-    cubemaps:        BoolProperty(name="Cubemaps",     default=True)
+    meshes:          BoolProperty(name="Meshes",        default=True)
+    materials:       BoolProperty(name="Materials",     default=True, description="Import Mesh Materials (this is usually the slowest part).")
+    lights_point:    BoolProperty(name="Point Lights",  default=True)
+    lights_spot:     BoolProperty(name="Spot Lights",   default=True)
+    cubemaps:        BoolProperty(name="Cubemaps",      default=True)
+    force_shadows:   BoolProperty(name="Force Shadows", default=False, description="Force all lights to cast shadows.")
     light_intensity: FloatProperty(name="Light Brightness", default=1, description="Optional multiplier for light intensity.")
-    light_angle_coef: FloatProperty(name="Light Angle", default=1, description="Optional multiplier for spotlight angle")
+    light_angle_coef: FloatProperty(name="Light Angle",     default=1, description="Optional multiplier for spotlight angle.")
 
     def execute(self, context):
         for file in self.files:
-            if file.name != "": LoadUMap(self.directory + file.name, self.meshes, self.materials, self.lights_point, self.lights_spot, self.cubemaps, self.light_intensity, self.light_angle_coef)
+            if file.name != "": LoadUMap(self.directory + file.name, self.meshes, self.materials, self.lights_point, self.lights_spot, self.cubemaps, 
+                                         self.force_shadows, self.light_intensity, self.light_angle_coef)
         return {'FINISHED'}
 
 reg_classes = ( ImportUMap, )
