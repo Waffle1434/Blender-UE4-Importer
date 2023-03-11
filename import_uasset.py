@@ -4,6 +4,7 @@ from struct import *
 from ctypes import *
 from mathutils import *
 
+engine_dir = r"F:\Epic Games\UE_4.27\Engine"
 logging = True
 try_unknown_structs = False
 
@@ -447,7 +448,11 @@ class UAsset:
         if i < 0: return self.GetImport(i)
         elif i > 0: return self.GetExport(i)
         else: return None #raise Exception("Invalid Package Index of 0")
-    def ToProjectPath(self, path:str): return os.path.join(self.project_dir, "Content", str(pathlib.Path(path).relative_to("\\Game"))) + ".uasset"
+    def ToProjectPath(self, path:str):
+        if path.startswith("/Game/"): return os.path.join(self.project_dir, "Content", path[6:]) + ".uasset"
+        elif path.startswith("/Engine/"): return os.path.join(engine_dir, "Content", path[8:]) + ".uasset"
+        else: raise
+        
     def TryReadPropertyGuid(self) -> uuid.UUID: return self.f.ReadGuid() if self.summary.version_ue4 >= 503 and self.f.ReadBool() else None
     #def TryReadProperty(self): # TODO
     def Read(self, read_all=True): # PackageReader.cpp

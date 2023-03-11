@@ -76,7 +76,8 @@ def ProcessUMapExport(export:Export, import_meshes=True, import_materials=True, 
             
             obj = SetupObject(bpy.context, export.object_name, mesh)
             TryApplyRootComponent(export, obj)
-        case 'PointLight' | 'SpotLight':
+        case 'PointLight' | 'SpotLight' | 'DirectionalLight':
+            rot_off = -90
             match export.export_class_type:
                 case 'PointLight':
                     light_type = 'POINT'
@@ -84,13 +85,18 @@ def ProcessUMapExport(export:Export, import_meshes=True, import_materials=True, 
                 case 'SpotLight':
                     light_type = 'SPOT'
                     if not import_lights_spot: return
-                case _: raise # TODO: Sun Light
+                case 'DirectionalLight':
+                    light_type = 'SUN'
+                    light_intensity = 100
+                    rot_off = 0
 
             export.ReadProperties(True, False)
 
             light = bpy.data.lights.new(export.object_name, light_type)
             light_obj = SetupObject(bpy.context, light.name, light)
-            TryApplyRootComponent(export, light_obj, -90) # Blender lights are cursed, local Z- Forward, Y+ Up, X+ Right
+            TryApplyRootComponent(export, light_obj, rot_off) # Blender lights are cursed, local Z- Forward, Y+ Up, X+ Right
+            
+            if export.export_class_type == 'DirectionalLight': light_obj.rotation_euler.rotate_axis('X', math.radians(90))
             
             light_comp = export.properties.TryGetValue('LightComponent')
             if light_comp:
@@ -140,6 +146,7 @@ def ProcessUMapExport(export:Export, import_meshes=True, import_materials=True, 
                     if not hasattr(export.asset, 'import_cache'): export.asset.import_cache = {}
 
                     bp_path = export.export_class.import_ref.object_name
+                    if bp_path.startswith("/Engine/"): return
                     bp_asset = export.asset.import_cache.get(bp_path)
                     if not bp_asset:
                         export.asset.import_cache[bp_path] = bp_asset = UAsset(export.asset.ToProjectPath(bp_path))
@@ -238,4 +245,5 @@ if __name__ != "import_umap":
 
     #LoadUMap(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary.umap", True, True)
     #LoadUMap(r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\Example_Stationary.umap", True, True)
+    LoadUMap(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Overview.umap", True, False)
     print("Done")
