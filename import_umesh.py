@@ -8,7 +8,7 @@ import import_uasset, import_umat
 from import_uasset import UAsset, Export, FStripDataFlags, FVector, FVector2D, FColor, Euler
 from import_umat import TryGetUMaterialImport
 
-def ImportStaticMesh(self:Export, import_materials=True, logging=True):
+def ImportStaticMesh(self:Export, import_materials=True, log=True):
     t0 = time.time()
     self.ReadProperties(False, False)
     asset = self.asset
@@ -139,21 +139,22 @@ def ImportStaticMesh(self:Export, import_materials=True, logging=True):
     
     # remaining is SpeedTree
 
-    print(f"Imported {self.object_name}: {(time.time() - t0) * 1000:.2f}ms")
+    if log: print(f"Imported {self.object_name} ({len(mesh.vertices)} Verts, {len(mesh.polygons)} Tris, {len(mesh.materials)} Materials): {(time.time() - t0) * 1000:.2f}ms")
     return mesh
-def ImportStaticMeshUAsset(filepath:str, import_materials=True, logging=True):
+def ImportStaticMeshUAsset(filepath:str, import_materials=True, log=False):
     asset = UAsset(filepath)
     asset.Read(False)
     for export in asset.exports:
         match export.export_class_type:
-            case 'StaticMesh': return ImportStaticMesh(export, import_materials)
-    if logging: print(f"\"{filepath}\" Static Mesh Export Not Found")
+            case 'StaticMesh': return ImportStaticMesh(export, import_materials, log)
+    if log: print(f"\"{filepath}\" Static Mesh Export Not Found")
     return None
 
 if __name__ != "import_umesh":
     importlib.reload(import_uasset)
     importlib.reload(import_umat)
 
-    ImportStaticMeshUAsset(cur_dir + r"\Samples\SM_Door_Small_A.uasset")
+    mesh = ImportStaticMeshUAsset(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Meshes\SM_Door_Small_A.uasset", True, True)
+    bpy.context.collection.objects.link(bpy.data.objects.new(mesh.name, mesh))
 
     print("Done")

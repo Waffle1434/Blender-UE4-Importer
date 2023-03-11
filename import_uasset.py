@@ -455,7 +455,7 @@ class UAsset:
         
     def TryReadPropertyGuid(self) -> uuid.UUID: return self.f.ReadGuid() if self.summary.version_ue4 >= 503 and self.f.ReadBool() else None
     #def TryReadProperty(self): # TODO
-    def Read(self, read_all=True): # PackageReader.cpp
+    def Read(self, read_all=True, log=False): # PackageReader.cpp
         t0 = time.time()
         self.f = ByteStream(open(self.filepath, 'rb'))
         self.summary = summary = USummary(self)
@@ -478,7 +478,7 @@ class UAsset:
         if read_all and summary.header_size > 0 and summary.exports_desc.count > 0:
             for export in self.exports: export.ReadProperties(False)
             self.f.byte_stream.close()
-            print(f"Imported {self} in {time.time() - t0:.2f}s")
+            if log: print(f"Imported {self} in {time.time() - t0:.2f}s")
     def Close(self): self.f.byte_stream.close()
     def __enter__(self):
         self.Read(self.read_all)

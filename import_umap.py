@@ -174,6 +174,12 @@ def ProcessUMapExport(export:Export, import_meshes=True, import_materials=True, 
 def LoadUMap(filepath, import_meshes=True, import_materials=True, import_lights_point=True, import_lights_spot=True, import_cubemaps=True, 
              force_shadows=False, light_intensity=1, light_angle_coef=1):
     t0 = time.time()
+
+    obj_count = len(bpy.data.objects)
+    mesh_count = len(bpy.data.meshes)
+    mat_count = len(bpy.data.materials)
+    light_count = len(bpy.data.lights)
+
     with UAsset(filepath) as asset:
         bpy.context.window_manager.progress_begin(0, len(asset.exports))
         for i, export in enumerate(asset.exports):
@@ -184,6 +190,8 @@ def LoadUMap(filepath, import_meshes=True, import_materials=True, import_lights_
     if hasattr(asset, 'import_cache'):
         for imp_asset in asset.import_cache.values(): imp_asset.Close()
     print(f"Imported {asset}: {(time.time() - t0) * 1000:.2f}ms")
+    print(f"{len(bpy.data.objects) - obj_count} Objects, {len(bpy.data.meshes) - mesh_count} Meshes, {len(bpy.data.materials) - mat_count} Materials, {len(bpy.data.lights) - light_count} Lights")
+    if len(bpy.data.lights) > 128: print(f"Warning, Exceeded Eevee's 128 Light Limit! ({len(bpy.data.lights)})")
 
 def menu_import_umap(self, context): self.layout.operator(ImportUMap.bl_idname, text="Unreal Engine Map (.umap)")
 class ImportUMap(bpy.types.Operator, ImportHelper):

@@ -9,7 +9,6 @@ import import_uasset
 from import_uasset import UAsset, Import, Export, Properties
 
 umodel_path = cur_dir + r"\umodel.exe"
-logging = True
 mute_ior = True
 mute_fresnel = True
 
@@ -138,7 +137,7 @@ def CreateNode(exp:Export, mat, nodes_data, graph_data, mat_mesh):
 
     mapping = UE2BlenderNode_dict.get(classname)
     if not mapping:
-        print(f"UNKNOWN CLASS: {classname}")
+        print(f"UNKNOWN UMAT CLASS: {classname}")
         mapping = default_mapping
     
     node_data.node = node = SetupNode(mat.node_tree, name, mapping, node_data)
@@ -214,7 +213,7 @@ def LinkSockets(mat, nodes_data, node_data):
                     case 'StructProperty': LinkSocket(mat, nodes_data, node_data, expr, property, mapping.inputs)
                     case 'ArrayProperty':
                         for i, elem in enumerate(expr.value): LinkSocket(mat, nodes_data, node_data, elem['Input'], i, { i:mapping.inputs[property][i] })
-def ImportUMaterial(filepath, mat_name=None, mat_mesh=None): # TODO: return asset
+def ImportUMaterial(filepath, mat_name=None, mat_mesh=None, log=False): # TODO: return asset
     t0 = time.time()
     if not os.path.exists(filepath):
         print(f"Error: \"{filepath}\" Does Not Exist!")
@@ -307,7 +306,7 @@ def ImportUMaterial(filepath, mat_name=None, mat_mesh=None): # TODO: return asse
                                 node.image = tex
                             else: print(f"Missing Texture \"{tex_imp.import_ref.object_name}\"")
     
-    if logging: print(f"Imported {mat.name}: {(time.time() - t0) * 1000:.2f}ms")
+    if log: print(f"Imported {mat.name}: {(time.time() - t0) * 1000:.2f}ms")
     return (mat, graph_data)
 def TryGetUMaterialImport(mat_imp:Import, mat_mesh):
     mat = bpy.data.materials.get(mat_imp.object_name)
