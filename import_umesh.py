@@ -167,13 +167,13 @@ if __name__ != "import_umesh":
     importlib.reload(import_umat)
 
     #filepath = r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Meshes\SM_Door_Small_A.uasset"
-    #filepath = r"F:\Projects\Unreal Projects\Assets\Content\VehicleVarietyPack\Meshes\SM_Truck_Box.uasset"
+    filepath = r"F:\Projects\Unreal Projects\Assets\Content\VehicleVarietyPack\Meshes\SM_Truck_Box.uasset"
     #filepath = r"F:\Projects\Unreal Projects\Assets\Content\VehicleVarietyPack\Meshes\SM_Hatchback.uasset"
     #filepath = r"F:\Projects\Unreal Projects\Assets\Content\VehicleVarietyPack\Meshes\SM_Pickup.uasset"
     #filepath = r"F:\Projects\Unreal Projects\Assets\Content\VehicleVarietyPack\Meshes\SM_SUV.uasset"
-    filepath = r"F:\Projects\Unreal Projects\Assets\Content\VehicleVarietyPack\Meshes\SM_SportsCar.uasset"
+    #filepath = r"F:\Projects\Unreal Projects\Assets\Content\VehicleVarietyPack\Meshes\SM_SportsCar.uasset"
 
-    mesh = ImportStaticMeshUAsset(filepath, False, True)
+    mesh = ImportStaticMeshUAsset(filepath, True, True)
     bpy.context.collection.objects.link(bpy.data.objects.new(mesh.name, mesh))
 
     print("Done")

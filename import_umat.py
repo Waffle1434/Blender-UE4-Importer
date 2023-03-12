@@ -58,7 +58,7 @@ class GraphData(): # TODO: redundant, only returned node_guids used
 default_mapping = UE2BlenderNodeMapping('ShaderNodeMath', label="UNKNOWN", color=Color((1,0,0)))
 UE2BlenderNode_dict = {
     'Material' : UE2BlenderNodeMapping('ShaderNodeBsdfPrincipled', hide=False, inputs={ 'BaseColor':'Base Color','Metallic':'Metallic','Specular':'Specular','Roughness':'Roughness',
-        'EmissiveColor':'Emission','Opacity':'Alpha','OpacityMask':'Alpha','Normal':'Normal','Refraction':'IOR' }),
+                                       'EmissiveColor':'Emission','Opacity':'Alpha','OpacityMask':'Alpha','Normal':'Normal','Refraction':'IOR' }),
     'MaterialExpressionAdd' : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='ADD', inputs={'A':0,'B':1}),
     'MaterialExpressionMultiply' : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='MULTIPLY', inputs={'A':0,'B':1}),
     'MaterialExpressionConstant' : UE2BlenderNodeMapping('ShaderNodeValue', hide=False),
@@ -70,6 +70,7 @@ UE2BlenderNode_dict = {
     'MaterialExpressionLinearInterpolate' : UE2BlenderNodeMapping('ShaderNodeMixRGB', label="Lerp", inputs={'A':1,'B':2,'Alpha':0}),
     'MaterialExpressionClamp' : UE2BlenderNodeMapping('ShaderNodeClamp', inputs={'Input':0,'Min':1,'Max':2}),
     'MaterialExpressionPower' : UE2BlenderNodeMapping('ShaderNodeMath', subtype='POWER', inputs={'Base':0,'Exponent':1}),
+    'MaterialExpressionTextureSample' : UE2BlenderNodeMapping('ShaderNodeTexImage', hide=False, inputs={'Coordinates':0}),
     'MaterialExpressionTextureSampleParameter2D' : UE2BlenderNodeMapping('ShaderNodeTexImage', hide=False, inputs={'Coordinates':0}),
     'MaterialExpressionTextureCoordinate' : UE2BlenderNodeMapping('ShaderNodeUVMap', hide=False),
     'MaterialExpressionDesaturation' : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='Desaturation', inputs={'Input':0,'Fraction':1}),
@@ -168,7 +169,7 @@ def CreateNode(exp:Export, mat, nodes_data, graph_data, mat_mesh):
                 except:
                     print(f"Failed to use UV{uv_i} from mesh")
                     pass
-        case 'MaterialExpressionTextureSampleParameter2D':
+        case 'MaterialExpressionTextureSampleParameter2D' | 'MaterialExpressionTextureSample':
             tex_imp = params.TryGetValue('Texture')
             if tex_imp:
                 tex = TryGetExtractedImport(tex_imp, exp.asset.extract_dir)
