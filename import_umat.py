@@ -124,7 +124,7 @@ def SetupNode(node_tree, name, mapping, node_data): # TODO: inline
             node.inputs['Fac'].default_value = 0
     return node
 def SetNodePos(node, param_x, param_y, params:Properties): node.location = (params.TryGetValue(param_x,0), -params.TryGetValue(param_y,0))
-def CreateNode(exp:Export, mat, nodes_data, graph_data, mat_mesh):
+def CreateNode(exp:Export, mat, nodes_data, graph_data, mesh):
     name = exp.object_name
     classname = exp.export_class_type # TODO: inline?
     nodes_data[name] = node_data = NodeData(exp)
@@ -164,8 +164,8 @@ def CreateNode(exp:Export, mat, nodes_data, graph_data, mat_mesh):
         case 'MaterialExpressionTextureCoordinate':
             uv_i = params.TryGetValue('CoordinateIndex')
             if uv_i != None:
-                if mat_mesh == None: mat_mesh = bpy.context.object.data # TODO: less fragile?
-                try: node.uv_map = mat_mesh.uv_layers.keys()[uv_i]
+                if mesh == None: mesh = bpy.context.object.data # TODO: less fragile?
+                try: node.uv_map = mesh.uv_layers.keys()[uv_i]
                 except:
                     print(f"Failed to use UV{uv_i} from mesh")
                     pass
@@ -214,7 +214,7 @@ def LinkSockets(mat, nodes_data, node_data):
                     case 'StructProperty': LinkSocket(mat, nodes_data, node_data, expr, property, mapping.inputs)
                     case 'ArrayProperty':
                         for i, elem in enumerate(expr.value): LinkSocket(mat, nodes_data, node_data, elem['Input'], i, { i:mapping.inputs[property][i] })
-def ImportUMaterial(filepath, mat_name=None, mat_mesh=None, log=False): # TODO: return asset
+def ImportUMaterial(filepath, mat_name=None, mesh=None, log=False): # TODO: return asset
     t0 = time.time()
     if not os.path.exists(filepath):
         print(f"Error: \"{filepath}\" Does Not Exist!")
@@ -239,9 +239,9 @@ def ImportUMaterial(filepath, mat_name=None, mat_mesh=None, log=False): # TODO: 
                     node_tree.nodes['Material Output'].location = node.location + Vector((300,0))
                     node_data = NodeData(exp, node=node)
 
-                    for exr_exp in params.TryGetValue('Expressions', ()): CreateNode(exr_exp.value, mat, nodes_data, graph_data, mat_mesh)
+                    for exr_exp in params.TryGetValue('Expressions', ()): CreateNode(exr_exp.value, mat, nodes_data, graph_data, mesh)
                     for comment_exp in params.TryGetValue('EditorComments', ()):
-                        comment_node = CreateNode(comment_exp.value, mat, nodes_data, graph_data, mat_mesh).node
+                        comment_node = CreateNode(comment_exp.value, mat, nodes_data, graph_data, mesh).node
                         for eval_node in filter(lambda n: not n.parent, node_tree.nodes):
                             diff = eval_node.location - comment_node.location
                             if diff.x > 0 and diff.x < comment_node.width and diff.y < 0 and diff.y > -comment_node.height: eval_node.parent = comment_node
@@ -286,7 +286,7 @@ def ImportUMaterial(filepath, mat_name=None, mat_mesh=None, log=False): # TODO: 
                     mat_parent = params.TryGetValue('Parent')
                     mat_path = asset.ToProjectPath(mat_parent.import_ref.object_name)
                     if not mat_name: mat_name = exp.object_name # TODO: unify
-                    mat, graph_data = ImportUMaterial(mat_path, mat_name, mat_mesh) # TODO: handle not found
+                    mat, graph_data = ImportUMaterial(mat_path, mat_name, mesh) # TODO: handle not found
 
                     for param in params.TryGetValue('ScalarParameterValues', ()):
                         node_data = graph_data.node_guids.get(param.value.TryGetValue('ExpressionGUID'))
@@ -309,11 +309,11 @@ def ImportUMaterial(filepath, mat_name=None, mat_mesh=None, log=False): # TODO: 
     
     if log: print(f"Imported {mat.name}: {(time.time() - t0) * 1000:.2f}ms")
     return (mat, graph_data)
-def TryGetUMaterialImport(mat_imp:Import, mat_mesh):
+def TryGetUMaterialImport(mat_imp:Import, mesh):
     mat = bpy.data.materials.get(mat_imp.object_name)
     if not mat:
         umat_path = mat_imp.asset.ToProjectPath(mat_imp.import_ref.object_name)
-        try: mat, graph_data = ImportUMaterial(umat_path, mat_mesh=mat_mesh)
+        try: mat, graph_data = ImportUMaterial(umat_path, mesh=mesh)
         except Exception as e:
             print(e)
             pass
