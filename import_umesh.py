@@ -147,7 +147,7 @@ def ImportStaticMesh(self:Export, import_materials=True, log=True):
                     initialized, override_densities = (f.ReadBool32(), f.ReadBool32())
                     local_uv_densities = (f.ReadFloat(), f.ReadFloat(), f.ReadFloat(), f.ReadFloat())
                 
-                if import_materials: mesh.materials.append(TryGetUMaterialImport(mat_interface, mat_mesh=mesh))
+                if import_materials: mesh.materials.append(TryGetUMaterialImport(mat_interface, mesh=mesh))
         
         # remaining is SpeedTree
 

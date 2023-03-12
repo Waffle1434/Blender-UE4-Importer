@@ -52,8 +52,26 @@ class NodeData():
         self.input_remap = input_remap
 class GraphData(): # TODO: redundant, only returned node_guids used
     def __init__(self):
-        self.nodes_data = {}
+        self.nodes_data:dict[str,NodeData] = {}
         self.node_guids = {}
+
+def HandleTextureObject(expr:Import, nodes_data:dict[str,NodeData], node_data:NodeData):
+    tex_param_node_exp = expr.value.node
+    tex_imp = tex_param_node_exp.properties.TryGetValue('Texture')
+    if tex_imp:
+        node = node_data.node
+
+        tex_param_node_data = nodes_data[tex_param_node_exp.object_name]
+        linked_tex_nodes = getattr(tex_param_node_data, 'linked_tex_nodes', [])
+        linked_tex_nodes.append(node)
+        tex_param_node_data.linked_tex_nodes = linked_tex_nodes
+
+        tex = TryGetExtractedImport(tex_imp, tex_imp.asset.extract_dir) # TODO: unify?
+        if tex:
+            if node.bl_idname == 'ShaderNodeTexImage':
+                if node.image: tex.colorspace_settings.name = node.image.colorspace_settings.name
+                node.image = tex
+        else: print(f"Missing Texture \"{tex_imp.import_ref.object_name}\"")
 
 default_mapping = UE2BlenderNodeMapping('ShaderNodeMath', label="UNKNOWN", color=Color((1,0,0)))
 UE2BlenderNode_dict = {
@@ -70,7 +88,7 @@ UE2BlenderNode_dict = {
     'MaterialExpressionLinearInterpolate' : UE2BlenderNodeMapping('ShaderNodeMixRGB', label="Lerp", inputs={'A':1,'B':2,'Alpha':0}),
     'MaterialExpressionClamp' : UE2BlenderNodeMapping('ShaderNodeClamp', inputs={'Input':0,'Min':1,'Max':2}),
     'MaterialExpressionPower' : UE2BlenderNodeMapping('ShaderNodeMath', subtype='POWER', inputs={'Base':0,'Exponent':1}),
-    'MaterialExpressionTextureSample' : UE2BlenderNodeMapping('ShaderNodeTexImage', hide=False, inputs={'Coordinates':0}),
+    'MaterialExpressionTextureSample' : UE2BlenderNodeMapping('ShaderNodeTexImage', hide=False, inputs={'Coordinates':0, 'TextureObject':HandleTextureObject}),
     'MaterialExpressionTextureSampleParameter2D' : UE2BlenderNodeMapping('ShaderNodeTexImage', hide=False, inputs={'Coordinates':0}),
     'MaterialExpressionTextureCoordinate' : UE2BlenderNodeMapping('ShaderNodeUVMap', hide=False),
     'MaterialExpressionDesaturation' : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='Desaturation', inputs={'Input':0,'Fraction':1}),
@@ -124,13 +142,13 @@ def SetupNode(node_tree, name, mapping, node_data): # TODO: inline
             node.inputs['Fac'].default_value = 0
     return node
 def SetNodePos(node, param_x, param_y, params:Properties): node.location = (params.TryGetValue(param_x,0), -params.TryGetValue(param_y,0))
-def CreateNode(exp:Export, mat, nodes_data, graph_data, mesh):
+def CreateNode(exp:Export, mat, nodes_data:dict[str,NodeData], graph_data, mesh):
     name = exp.object_name
     classname = exp.export_class_type # TODO: inline?
     nodes_data[name] = node_data = NodeData(exp)
     params = exp.properties
 
-    if classname in class_blacklist: return None # TODO: iterate material expression array instead
+    if classname in class_blacklist: return None # TODO: iterate material expression array instead?
 
     if classname == 'MaterialExpressionMaterialFunctionCall': # TODO: import subtree from unreal directory
         classname = params.TryGetValue('MaterialFunction').object_name
@@ -181,7 +199,7 @@ def CreateNode(exp:Export, mat, nodes_data, graph_data, mesh):
     expr_guid = params.TryGetValue('ExpressionGUID')
     if expr_guid: graph_data.node_guids[expr_guid] = node_data
     return node_data
-def LinkSocket(mat, nodes_data, node_data, expr, property, socket_mapping):
+def LinkSocket(mat, nodes_data:dict[str,NodeData], node_data:NodeData, expr:Import, property, socket_mapping):
     link_node_exp = expr.value.node if expr.struct_type == 'ExpressionInput' else expr.value
     link_node_name = link_node_exp.object_name
     if link_node_name in nodes_data:
@@ -204,16 +222,19 @@ def LinkSocket(mat, nodes_data, node_data, expr, property, socket_mapping):
             if mute_fresnel and src_socket.node.bl_idname == 'ShaderNodeFresnel': link.is_muted = True
         else: print(f"FAILED LINK: {node.name}.{property}")
     else: print(f"MISSING NODE: {str(link_node_name)}")
-def LinkSockets(mat, nodes_data, node_data):
+def LinkSockets(mat, nodes_data:dict[str,NodeData], node_data:NodeData):
     mapping = UE2BlenderNode_dict.get(node_data.classname)
     if mapping and mapping.inputs:
-        for property in mapping.inputs:
-            if property in node_data.export.properties:
+        for property in mapping.inputs: # TODO: try get value
+            if property in node_data.export.properties: # TODO: try get value
                 expr = node_data.export.properties[property]
-                match expr.type:
-                    case 'StructProperty': LinkSocket(mat, nodes_data, node_data, expr, property, mapping.inputs)
-                    case 'ArrayProperty':
-                        for i, elem in enumerate(expr.value): LinkSocket(mat, nodes_data, node_data, elem['Input'], i, { i:mapping.inputs[property][i] })
+                map_val = mapping.inputs[property] # TODO: pass to LinkSocket
+                if callable(map_val): map_val(expr, nodes_data, node_data)
+                else:
+                    match expr.type:
+                        case 'StructProperty': LinkSocket(mat, nodes_data, node_data, expr, property, mapping.inputs)
+                        case 'ArrayProperty':
+                            for i, elem in enumerate(expr.value): LinkSocket(mat, nodes_data, node_data, elem['Input'], i, { i:mapping.inputs[property][i] })
 def ImportUMaterial(filepath, mat_name=None, mesh=None, log=False): # TODO: return asset
     t0 = time.time()
     if not os.path.exists(filepath):
@@ -277,7 +298,8 @@ def ImportUMaterial(filepath, mat_name=None, mesh=None, log=False): # TODO: retu
 
                         node_data.input_remap = { 'Normal':n2rgb.inputs['Normal'] }
 
-                    for name in nodes_data: LinkSockets(mat, nodes_data, nodes_data[name]) # TODO: this iterates nodes without links!
+                    for name in nodes_data:
+                        LinkSockets(mat, nodes_data, nodes_data[name]) # TODO: this iterates nodes without links!
                     LinkSockets(mat, nodes_data, node_data)
                     
                     ior = node.inputs['IOR']
@@ -300,11 +322,17 @@ def ImportUMaterial(filepath, mat_name=None, mesh=None, log=False): # TODO: retu
                     for param in params.TryGetValue('TextureParameterValues', ()):
                         tex_imp = param.value.TryGetValue('ParameterValue')
                         if tex_imp:
-                            tex = TryGetExtractedImport(tex_imp, exp.asset.extract_dir) # TODO: reuse?
+                            tex = TryGetExtractedImport(tex_imp, tex_imp.asset.extract_dir) # TODO: reuse?
                             if tex:
-                                node = graph_data.node_guids.get(param.value.TryGetValue('ExpressionGUID')).node
-                                if node.image: tex.colorspace_settings.name = node.image.colorspace_settings.name
-                                node.image = tex
+                                tex_node_data = graph_data.node_guids[param.value.TryGetValue('ExpressionGUID')]
+                                node = tex_node_data.node
+                                if node.bl_idname == 'ShaderNodeTexImage':
+                                    if node.image: tex.colorspace_settings.name = node.image.colorspace_settings.name
+                                    node.image = tex
+                                else:
+                                    for tex_node in tex_node_data.linked_tex_nodes:
+                                        if tex_node.image: tex.colorspace_settings.name = tex_node.image.colorspace_settings.name
+                                        tex_node.image = tex
                             else: print(f"Missing Texture \"{tex_imp.import_ref.object_name}\"")
     
     if log: print(f"Imported {mat.name}: {(time.time() - t0) * 1000:.2f}ms")
@@ -315,7 +343,7 @@ def TryGetUMaterialImport(mat_imp:Import, mesh):
         umat_path = mat_imp.asset.ToProjectPath(mat_imp.import_ref.object_name)
         try: mat, graph_data = ImportUMaterial(umat_path, mesh=mesh)
         except Exception as e:
-            print(e)
+            print(f"Failed to Import {mat_imp.object_name}: {e}")
             pass
     return mat
 
@@ -323,8 +351,7 @@ if __name__ != "import_umat":
     importlib.reload(import_uasset)
     for mat in bpy.data.materials: bpy.data.materials.remove(mat)
 
-    #filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\Samples\M_Base_Trim.uasset"
-    #filepath = r"F:\Art\Assets\Game\Blender UE4 Importer\Samples\MI_Trim_A_Red2.uasset"
-    #filepath = r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\M_Base_Trim.uasset"
-    ImportUMaterial(r"F:\Art\Assets\Game\Blender UE4 Importer\Samples\MI_Trim_A_Red2.uasset")
+    #filepath = r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Materials\M_Base_Trim.uasset"
+    filepath = r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Materials\MI_Trim_A_Red2.uasset"
+    ImportUMaterial(filepath)
     print("Done")
