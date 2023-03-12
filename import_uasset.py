@@ -77,7 +77,7 @@ class FExpressionInput:
     def __init__(self, asset:UAsset, editor=True):
         self.node = asset.GetExport(asset.f.ReadInt32()) if editor else None
         self.node_output_i = asset.f.ReadInt32()
-        self.input_name = asset.f.ReadFString()
+        self.input_name = asset.f.ReadFName(asset.names) if asset.summary.version_ue4 >= 514 else asset.f.ReadFString()
         if editor:
             self.mask = asset.f.ReadInt32()
             self.mask_rgba = (asset.f.ReadInt32(),asset.f.ReadInt32(),asset.f.ReadInt32(),asset.f.ReadInt32())
@@ -110,7 +110,7 @@ class FStripDataFlags(PrintableStruct): _fields_ = ( ('global_strip_flags', c_ub
 prop_table_types = { "ExpressionOutput", "ScalarParameterValue", "TextureParameterValue", "VectorParameterValue", "MaterialFunctionInfo", "StaticMaterial", "KAggregateGeom", "BodyInstance", 
                     "KConvexElem", "Transform", "StaticMeshSourceModel", "MeshBuildSettings", "MeshReductionSettings", "MeshUVChannelInfo", "AssetEditorOrbitCameraPosition", "SimpleMemberReference", 
                     "CollisionResponse", "ResponseChannel", "StreamingTextureBuildInfo", "BuilderPoly", "PostProcessSettings", "LevelViewportInfo", "MaterialProxySettings", "MeshProxySettings",
-                    "MeshMergingSettings", "HierarchicalSimplification", "Timeline", "TimelineFloatTrack" } # MaterialTextureInfo
+                    "MeshMergingSettings", "HierarchicalSimplification", "Timeline", "TimelineFloatTrack", "ParameterGroupData", "MaterialParameterInfo", "MaterialInstanceBasePropertyOverrides" }
 prop_table_blacklist = { "MaterialTextureInfo" }
 struct_map = { "Vector":FVector, "Rotator":FVector, "Vector4":FVector4, "IntPoint":FIntPoint, "Quat":FQuat, "Box":FBox, "Color":FColor, "LinearColor":FLinearColor, "BoxSphereBounds":FBoxSphereBounds }
 
@@ -232,7 +232,6 @@ class UProperty:
                     if asset.summary.version_ue4 >= 441: self.struct_guid = f.ReadGuid()
                     self.guid = asset.TryReadPropertyGuid()
 
-                header = False
                 p = f.Position()
                 match self.struct_type:
                     case "Guid": self.value = f.ReadGuid()
