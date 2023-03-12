@@ -63,19 +63,20 @@ def ReadMeshBulkData(self:Export, asset:UAsset, f:import_uasset.ByteStream): # F
                 #face.smooth = face_smoothing_mask[i_poly] == 0
                 face.material_index = face_mat_indices[i_poly]
 
-                #n = wedge_normals[i_wedge]
-                #spl_norms.append(Vector((n.y, n.x, n.z)))
+                n1 = wedge_normals[i_wedge + 0]
+                n2 = wedge_normals[i_wedge + 1]
+                n3 = wedge_normals[i_wedge + 2]
+                spl_norms.append(Vector((n1.y, n1.x, n1.z)))
+                spl_norms.append(Vector((n2.y, n2.x, n2.z)))
+                spl_norms.append(Vector((n3.y, n3.x, n3.z)))
 
                 for i_uv in range(len(uvs)):
-                    uv_lay = uvs[i_uv]
-                    w_uvs = wedge_uvs[i_uv]
-                    
-                    uv1 = w_uvs[i_wedge + 0]
-                    uv2 = w_uvs[i_wedge + 1]
-                    uv3 = w_uvs[i_wedge + 2]
-                    loops[0][uv_lay].uv = (uv1.x, 1-uv1.y)
-                    loops[1][uv_lay].uv = (uv2.x, 1-uv2.y)
-                    loops[2][uv_lay].uv = (uv3.x, 1-uv3.y)
+                    uv1 = wedge_uvs[i_uv][i_wedge + 0]
+                    uv2 = wedge_uvs[i_uv][i_wedge + 1]
+                    uv3 = wedge_uvs[i_uv][i_wedge + 2]
+                    loops[0][uvs[i_uv]].uv = (uv1.x, 1-uv1.y)
+                    loops[1][uvs[i_uv]].uv = (uv2.x, 1-uv2.y)
+                    loops[2][uvs[i_uv]].uv = (uv3.x, 1-uv3.y)
                 if len(wedge_colors) > 0:
                     col1 = wedge_colors[i_wedge + 0]
                     col2 = wedge_colors[i_wedge + 1]
@@ -84,10 +85,6 @@ def ReadMeshBulkData(self:Export, asset:UAsset, f:import_uasset.ByteStream): # F
                     loops[1][col_lay] = Vector((col2.r,col2.g,col2.b,col2.a)) / 255.0
                     loops[2][col_lay] = Vector((col3.r,col3.g,col3.b,col3.a)) / 255.0
             except ValueError: pass # Face already exists
-        
-        for i_wn in range(0, len(wedge_indices)):
-            n = wedge_normals[i_wn]
-            spl_norms.append(Vector((n.y, n.x, n.z)))
 
         mesh = bpy.data.meshes.new(self.object_name)
         mdl_bm.to_mesh(mesh)
@@ -170,10 +167,11 @@ if __name__ != "import_umesh":
     importlib.reload(import_umat)
 
     #filepath = r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Meshes\SM_Door_Small_A.uasset"
-    filepath = r"F:\Projects\Unreal Projects\Assets\Content\VehicleVarietyPack\Meshes\SM_Truck_Box.uasset"
+    #filepath = r"F:\Projects\Unreal Projects\Assets\Content\VehicleVarietyPack\Meshes\SM_Truck_Box.uasset"
     #filepath = r"F:\Projects\Unreal Projects\Assets\Content\VehicleVarietyPack\Meshes\SM_Hatchback.uasset"
     #filepath = r"F:\Projects\Unreal Projects\Assets\Content\VehicleVarietyPack\Meshes\SM_Pickup.uasset"
-    #filepath = r"F:\Projects\Unreal Projects\Assets\Content\VehicleVarietyPack\Meshes\SM_SportsCar.uasset"
+    #filepath = r"F:\Projects\Unreal Projects\Assets\Content\VehicleVarietyPack\Meshes\SM_SUV.uasset"
+    filepath = r"F:\Projects\Unreal Projects\Assets\Content\VehicleVarietyPack\Meshes\SM_SportsCar.uasset"
 
     mesh = ImportStaticMeshUAsset(filepath, False, True)
     bpy.context.collection.objects.link(bpy.data.objects.new(mesh.name, mesh))
