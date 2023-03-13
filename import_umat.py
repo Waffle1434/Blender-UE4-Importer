@@ -62,9 +62,8 @@ def HandleTextureObject(expr:Import, nodes_data:dict[str,NodeData], node_data:No
         node = node_data.node
 
         tex_param_node_data = nodes_data[tex_param_node_exp.object_name]
-        linked_tex_nodes = getattr(tex_param_node_data, 'linked_tex_nodes', [])
-        linked_tex_nodes.append(node)
-        tex_param_node_data.linked_tex_nodes = linked_tex_nodes
+        tex_param_node_data.linked_tex_nodes = getattr(tex_param_node_data, 'linked_tex_nodes', [])
+        tex_param_node_data.linked_tex_nodes.append(node)
 
         tex = TryGetExtractedImport(tex_imp, tex_imp.asset.extract_dir) # TODO: unify?
         if tex:
@@ -90,6 +89,7 @@ UE2BlenderNode_dict = {
     'MaterialExpressionPower' : UE2BlenderNodeMapping('ShaderNodeMath', subtype='POWER', inputs={'Base':0,'Exponent':1}),
     'MaterialExpressionTextureSample' : UE2BlenderNodeMapping('ShaderNodeTexImage', hide=False, inputs={'Coordinates':0, 'TextureObject':HandleTextureObject}),
     'MaterialExpressionTextureSampleParameter2D' : UE2BlenderNodeMapping('ShaderNodeTexImage', hide=False, inputs={'Coordinates':0}),
+    'MaterialExpressionTextureObjectParameter' : UE2BlenderNodeMapping('ShaderNodeValue'),
     'MaterialExpressionTextureCoordinate' : UE2BlenderNodeMapping('ShaderNodeUVMap', hide=False),
     'MaterialExpressionDesaturation' : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='Desaturation', inputs={'Input':0,'Fraction':1}),
     'MaterialExpressionComment' : UE2BlenderNodeMapping('NodeFrame'),
@@ -199,11 +199,10 @@ def CreateNode(exp:Export, mat, nodes_data:dict[str,NodeData], graph_data, mesh)
     expr_guid = params.TryGetValue('ExpressionGUID')
     if expr_guid: graph_data.node_guids[expr_guid] = node_data
     return node_data
-def LinkSocket(mat, nodes_data:dict[str,NodeData], node_data:NodeData, expr:Import, property, socket_mapping):
+def LinkSocket(mat, nodes_data:dict[str,NodeData], node_data:NodeData, expr:Import, property, dst_index):
     link_node_exp = expr.value.node if expr.struct_type == 'ExpressionInput' else expr.value
-    link_node_name = link_node_exp.object_name
-    if link_node_name in nodes_data:
-        link_node_data = nodes_data[link_node_name]
+    link_node_data = nodes_data.get(link_node_exp.object_name)
+    if link_node_data:
         link_node_type = link_node_data.classname
         if link_node_type in class_blacklist: return
         
@@ -212,10 +211,8 @@ def LinkSocket(mat, nodes_data:dict[str,NodeData], node_data:NodeData, expr:Impo
         src_socket = outputs[expr.value.node_output_i if expr.struct_type == 'ExpressionInput' else 0]
         dst_socket = None
 
-        if property in socket_mapping: 
-            if link_node_type == 'MaterialExpressionAppendVector' and node.bl_idname == 'ShaderNodeCombineXYZ': raise Exception("Unreal's append is annoying")
-            dst_socket = node.inputs[socket_mapping[property]] # dst_index
-        else: print(f"UNKNOWN PARAM: {node.name}.{property}")
+        if link_node_type == 'MaterialExpressionAppendVector' and node.bl_idname == 'ShaderNodeCombineXYZ': raise Exception("Unreal's append is annoying")
+        dst_socket = node.inputs[dst_index]
         if node_data.input_remap and property in node_data.input_remap: dst_socket = node_data.input_remap[property]
         if src_socket and dst_socket:
             link = mat.node_tree.links.new(src_socket, dst_socket)
@@ -225,16 +222,15 @@ def LinkSocket(mat, nodes_data:dict[str,NodeData], node_data:NodeData, expr:Impo
 def LinkSockets(mat, nodes_data:dict[str,NodeData], node_data:NodeData):
     mapping = UE2BlenderNode_dict.get(node_data.classname)
     if mapping and mapping.inputs:
-        for property in mapping.inputs: # TODO: try get value
-            if property in node_data.export.properties: # TODO: try get value
-                expr = node_data.export.properties[property]
-                map_val = mapping.inputs[property] # TODO: pass to LinkSocket
+        for property, map_val in mapping.inputs.items():
+            expr = node_data.export.properties.get(property)
+            if expr:
                 if callable(map_val): map_val(expr, nodes_data, node_data)
                 else:
                     match expr.type:
-                        case 'StructProperty': LinkSocket(mat, nodes_data, node_data, expr, property, mapping.inputs)
+                        case 'StructProperty': LinkSocket(mat, nodes_data, node_data, expr, property, map_val)
                         case 'ArrayProperty':
-                            for i, elem in enumerate(expr.value): LinkSocket(mat, nodes_data, node_data, elem['Input'], i, { i:mapping.inputs[property][i] })
+                            for i, elem in enumerate(expr.value): LinkSocket(mat, nodes_data, node_data, elem['Input'], i, map_val[i])
 def ImportUMaterial(filepath, mat_name=None, mesh=None, log=False): # TODO: return asset
     t0 = time.time()
     if not os.path.exists(filepath):
