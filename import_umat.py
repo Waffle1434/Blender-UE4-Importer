@@ -28,7 +28,17 @@ def TryGetExtractedImport(imp:Import, extract_dir):
             asset_path = imp.asset.ToProjectPath(archive_path)
             extract_dir = os.path.join(extract_dir, "Game")
             subprocess.run(f"\"{umodel_path}\" -export -png -out=\"{extract_dir}\" \"{asset_path}\"")
-        try: imp.extracted = bpy.data.images.load(extracted_path, check_existing=True)
+        try:
+            imp.extracted = tex = bpy.data.images.load(extracted_path, check_existing=True)
+
+            tex_uasset_path = imp.asset.ToProjectPath(archive_path)
+            with UAsset(tex_uasset_path, False) as asset:
+                for export in asset.exports:
+                    if export.export_class_type == 'Texture2D':
+                        export.ReadProperties(False, False)
+                        tex.colorspace_settings.name = 'sRGB' if export.properties.TryGetValue('SRGB',True) else 'Non-Color'
+                        tex['flip_y'] = export.properties.TryGetValue('bFlipGreenChannel',False)
+                        break
         except:
             imp.extracted = None
             pass
@@ -67,35 +77,33 @@ def HandleTextureObject(expr:Import, nodes_data:dict[str,NodeData], node_data:No
 
         tex = TryGetExtractedImport(tex_imp, tex_imp.asset.extract_dir) # TODO: unify?
         if tex:
-            if node.bl_idname == 'ShaderNodeTexImage':
-                if node.image: tex.colorspace_settings.name = node.image.colorspace_settings.name
-                node.image = tex
+            if node.bl_idname == 'ShaderNodeTexImage': SetNodeTexture(node, tex)
         else: print(f"Missing Texture \"{tex_imp.import_ref.object_name}\"")
 
 default_mapping = UE2BlenderNodeMapping('ShaderNodeMath', label="UNKNOWN", color=Color((1,0,0)))
 UE2BlenderNode_dict = {
     'Material' : UE2BlenderNodeMapping('ShaderNodeBsdfPrincipled', hide=False, inputs={ 'BaseColor':'Base Color','Metallic':'Metallic','Specular':'Specular','Roughness':'Roughness',
                                        'EmissiveColor':'Emission','Opacity':'Alpha','OpacityMask':'Alpha','Normal':'Normal','Refraction':'IOR' }),
-    'MaterialExpressionAdd' : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='ADD', inputs={'A':0,'B':1}),
-    'MaterialExpressionMultiply' : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='MULTIPLY', inputs={'A':0,'B':1}),
-    'MaterialExpressionConstant' : UE2BlenderNodeMapping('ShaderNodeValue', hide=False),
-    'MaterialExpressionScalarParameter' : UE2BlenderNodeMapping('ShaderNodeValue', hide=False),
-    'MaterialExpressionConstant3Vector' : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='RGBA', hide=False, outputs={'RGB':0,'R':1,'G':2,'B':3,'A':4}),
-    'MaterialExpressionVectorParameter' : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='RGBA', hide=False, outputs={'RGB':0,'R':1,'G':2,'B':3,'A':4}),
+    'MaterialExpressionAdd'               : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='ADD', inputs={'A':0,'B':1}),
+    'MaterialExpressionMultiply'          : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='MULTIPLY', inputs={'A':0,'B':1}),
+    'MaterialExpressionConstant'          : UE2BlenderNodeMapping('ShaderNodeValue', hide=False),
+    'MaterialExpressionScalarParameter'   : UE2BlenderNodeMapping('ShaderNodeValue', hide=False),
+    'MaterialExpressionConstant3Vector'   : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='RGBA', hide=False, outputs={'RGB':0,'R':1,'G':2,'B':3,'A':4}),
+    'MaterialExpressionVectorParameter'   : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='RGBA', hide=False, outputs={'RGB':0,'R':1,'G':2,'B':3,'A':4}),
     'MaterialExpressionStaticSwitchParameter' : UE2BlenderNodeMapping('ShaderNodeMixRGB', label="Switch", hide=False, inputs={'A':2,'B':1}),
-    'MaterialExpressionAppendVector' : UE2BlenderNodeMapping('ShaderNodeCombineXYZ', label="Append", inputs={'A':0,'B':1}),
+    'MaterialExpressionAppendVector'      : UE2BlenderNodeMapping('ShaderNodeCombineXYZ', label="Append", inputs={'A':0,'B':1}),
     'MaterialExpressionLinearInterpolate' : UE2BlenderNodeMapping('ShaderNodeMixRGB', label="Lerp", inputs={'A':1,'B':2,'Alpha':0}),
-    'MaterialExpressionClamp' : UE2BlenderNodeMapping('ShaderNodeClamp', inputs={'Input':0,'Min':1,'Max':2}),
-    'MaterialExpressionPower' : UE2BlenderNodeMapping('ShaderNodeMath', subtype='POWER', inputs={'Base':0,'Exponent':1}),
-    'MaterialExpressionTextureSample' : UE2BlenderNodeMapping('ShaderNodeTexImage', hide=False, inputs={'Coordinates':0, 'TextureObject':HandleTextureObject}),
+    'MaterialExpressionClamp'             : UE2BlenderNodeMapping('ShaderNodeClamp', inputs={'Input':0,'Min':1,'Max':2}),
+    'MaterialExpressionPower'             : UE2BlenderNodeMapping('ShaderNodeMath', subtype='POWER', inputs={'Base':0,'Exponent':1}),
+    'MaterialExpressionTextureSample'     : UE2BlenderNodeMapping('ShaderNodeTexImage', hide=False, inputs={'Coordinates':0, 'TextureObject':HandleTextureObject}),
     'MaterialExpressionTextureSampleParameter2D' : UE2BlenderNodeMapping('ShaderNodeTexImage', hide=False, inputs={'Coordinates':0}),
-    'MaterialExpressionTextureObjectParameter' : UE2BlenderNodeMapping('ShaderNodeValue'),
+    'MaterialExpressionTextureObjectParameter'   : UE2BlenderNodeMapping('ShaderNodeValue'),
     'MaterialExpressionTextureCoordinate' : UE2BlenderNodeMapping('ShaderNodeUVMap', hide=False),
-    'MaterialExpressionDesaturation' : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='Desaturation', inputs={'Input':0,'Fraction':1}),
-    'MaterialExpressionComment' : UE2BlenderNodeMapping('NodeFrame'),
-    'MaterialExpressionFresnel' : UE2BlenderNodeMapping('ShaderNodeFresnel', hide=False),
-    'CheapContrast_RGB' : UE2BlenderNodeMapping('ShaderNodeBrightContrast', hide=False, inputs={'FunctionInputs':('Color','Contrast')}),
-    'BlendAngleCorrectedNormals' : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='BlendAngleCorrectedNormals', hide=False, inputs={'FunctionInputs':(0,1)}),
+    'MaterialExpressionDesaturation'      : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='Desaturation', inputs={'Input':0,'Fraction':1}),
+    'MaterialExpressionComment'           : UE2BlenderNodeMapping('NodeFrame'),
+    'MaterialExpressionFresnel'           : UE2BlenderNodeMapping('ShaderNodeFresnel', hide=False),
+    'CheapContrast_RGB'                   : UE2BlenderNodeMapping('ShaderNodeBrightContrast', hide=False, inputs={'FunctionInputs':('Color','Contrast')}),
+    'BlendAngleCorrectedNormals'          : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='BlendAngleCorrectedNormals', hide=False, inputs={'FunctionInputs':(0,1)}),
 }
 class_blacklist = { 'SceneThumbnailInfoWithPrimitive', 'MetaData', 'MaterialExpressionPanner' }
 material_classes = { 'Material', 'MaterialInstanceConstant' }
@@ -124,7 +132,7 @@ def SetupNode(node_tree, name, mapping, node_data): # TODO: inline
             rgb_in = node.outputs['Color']
             if node_data.export.properties.TryGetValue('SamplerType') == 'SAMPLERTYPE_Normal':
                 rgb2n = node_tree.nodes.new('ShaderNodeGroup')
-                rgb2n.node_tree = bpy.data.node_groups['RGBtoNormal']
+                rgb2n.node_tree = bpy.data.node_groups['RGBtoNormalY-']
                 rgb2n.hide = True
                 SetNodePos(rgb2n, param_x, param_y, node_data.export.properties)
                 rgb2n.location += Vector((0,30))
@@ -192,9 +200,8 @@ def CreateNode(exp:Export, mat, nodes_data:dict[str,NodeData], graph_data, mesh)
             if tex_imp:
                 tex = TryGetExtractedImport(tex_imp, exp.asset.extract_dir)
                 if tex:
-                    node.image = tex
-                    if params.TryGetValue('SamplerType') == 'SAMPLERTYPE_Normal':
-                        node.image.colorspace_settings.name, node.interpolation = ('Non-Color', 'Smart')
+                    SetNodeTexture(node, tex)
+                    if params.TryGetValue('SamplerType') == 'SAMPLERTYPE_Normal': node.interpolation = 'Smart'
                 else: print(f"Missing Texture \"{tex_imp.import_ref.object_name}\"")
     expr_guid = params.TryGetValue('ExpressionGUID')
     if expr_guid: graph_data.node_guids[expr_guid] = node_data
@@ -218,7 +225,7 @@ def LinkSocket(mat, nodes_data:dict[str,NodeData], node_data:NodeData, expr:Impo
             link = mat.node_tree.links.new(src_socket, dst_socket)
             if mute_fresnel and src_socket.node.bl_idname == 'ShaderNodeFresnel': link.is_muted = True
         else: print(f"FAILED LINK: {node.name}.{property}")
-    else: print(f"MISSING NODE: {str(link_node_name)}")
+    else: print(f"Link Failed, Missing Node: {str(link_node_exp.object_name)}")
 def LinkSockets(mat, nodes_data:dict[str,NodeData], node_data:NodeData):
     mapping = UE2BlenderNode_dict.get(node_data.classname)
     if mapping and mapping.inputs:
@@ -231,6 +238,13 @@ def LinkSockets(mat, nodes_data:dict[str,NodeData], node_data:NodeData):
                         case 'StructProperty': LinkSocket(mat, nodes_data, node_data, expr, property, map_val)
                         case 'ArrayProperty':
                             for i, elem in enumerate(expr.value): LinkSocket(mat, nodes_data, node_data, elem['Input'], i, map_val[i])
+def SetNodeTexture(node, image):
+    node.image = image
+    links = node.outputs['Color'].links
+    if len(links) > 0:
+        linked_node = links[0].to_node
+        if linked_node.node_tree.name.startswith('RGBtoNormal'):
+            linked_node.node_tree = bpy.data.node_groups['RGBtoNormal' if image.get('flip_y', False) else 'RGBtoNormalY-']
 def ImportUMaterial(filepath, mat_name=None, mesh=None, log=False): # TODO: return asset
     t0 = time.time()
     if not os.path.exists(filepath):
@@ -321,14 +335,11 @@ def ImportUMaterial(filepath, mat_name=None, mesh=None, log=False): # TODO: retu
                             tex = TryGetExtractedImport(tex_imp, tex_imp.asset.extract_dir) # TODO: reuse?
                             if tex:
                                 tex_node_data = graph_data.node_guids[param.value.TryGetValue('ExpressionGUID')]
-                                node = tex_node_data.node
-                                if node.bl_idname == 'ShaderNodeTexImage':
-                                    if node.image: tex.colorspace_settings.name = node.image.colorspace_settings.name
-                                    node.image = tex
+                                tex_node = tex_node_data.node
+                                if tex_node.bl_idname == 'ShaderNodeTexImage': SetNodeTexture(tex_node, tex)
                                 else:
-                                    for tex_node in tex_node_data.linked_tex_nodes:
-                                        if tex_node.image: tex.colorspace_settings.name = tex_node.image.colorspace_settings.name
-                                        tex_node.image = tex
+                                    for tex_node in tex_node_data.linked_tex_nodes: SetNodeTexture(tex_node, tex)
+
                             else: print(f"Missing Texture \"{tex_imp.import_ref.object_name}\"")
     
     if log: print(f"Imported {mat.name}: {(time.time() - t0) * 1000:.2f}ms")
