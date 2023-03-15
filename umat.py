@@ -18,7 +18,7 @@ def TryAppendNodeGroups():
     if 'AdditiveSurface' not in bpy.data.node_groups:
         with bpy.data.libraries.load(str(filepath)) as (data_from, data_to):
             for node_group in data_from.node_groups:
-                bpy.ops.wm.append(filepath=str(node_tree_path / node_group), directory=str(node_tree_path), filename=node_group)
+                bpy.ops.wm.append(filepath=str(node_tree_path / node_group), directory=str(node_tree_path), filename=node_group, set_fake=True)
 
 def TryGetExtractedImport(imp:Import, extract_dir):
     if not hasattr(imp, "extracted"):
@@ -104,7 +104,7 @@ UE2BlenderNode_dict = {
     'MaterialExpressionComment'           : UE2BlenderNodeMapping('NodeFrame'),
     'MaterialExpressionFresnel'           : UE2BlenderNodeMapping('ShaderNodeFresnel', hide=False),
     'CheapContrast_RGB'                   : UE2BlenderNodeMapping('ShaderNodeBrightContrast', hide=False, inputs={'FunctionInputs':('Color','Contrast')}),
-    'BlendAngleCorrectedNormals'          : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='BlendAngleCorrectedNormals', hide=False, inputs={'FunctionInputs':(0,1)}),
+    #'BlendAngleCorrectedNormals'          : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='BlendAngleCorrectedNormals', hide=False, inputs={'FunctionInputs':(0,1)}),
 }
 class_blacklist = { 'SceneThumbnailInfoWithPrimitive', 'MetaData', 'MaterialExpressionPanner' }
 material_classes = { 'Material', 'MaterialInstanceConstant' }
@@ -246,6 +246,8 @@ def SetNodeTexture(node, image):
         linked_node = links[0].to_node
         if linked_node.node_tree.name.startswith('RGBtoNormal'):
             linked_node.node_tree = bpy.data.node_groups['RGBtoNormal' if image.get('flip_y', False) else 'RGBtoNormalY-']
+def ImportMaterialFunction():
+    print("!")
 def ImportUMaterial(filepath, mat_name=None, mesh=None, uproject=None, log=False): # TODO: return asset
     t0 = time.time()
     if not os.path.exists(filepath):
