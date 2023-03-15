@@ -4,11 +4,11 @@ from mathutils import Vector
 
 cur_dir = os.path.dirname(__file__)
 if cur_dir not in sys.path: sys.path.append(cur_dir)
-import import_uasset, import_umat
-from import_uasset import UAsset, Export, FStripDataFlags, FVector, FVector2D, FColor, Euler
-from import_umat import TryGetUMaterialImport
+import uasset, umat
+from uasset import UAsset, Export, FStripDataFlags, FVector, FVector2D, FColor, Euler
+from umat import TryGetUMaterialImport
 
-def ReadMeshBulkData(self:Export, asset:UAsset, f:import_uasset.ByteStream): # FByteBulkData
+def ReadMeshBulkData(self:Export, asset:UAsset, f:uasset.ByteStream): # FByteBulkData
     flags = f.ReadUInt32()
     assert not (flags & 0x2) # BULKDATA_Size64Bit
     count = f.ReadUInt32()
@@ -162,9 +162,9 @@ def ImportStaticMeshUAsset(filepath:str, import_materials=True, log=False):
     if log: print(f"\"{filepath}\" Static Mesh Export Not Found")
     return None
 
-if __name__ != "import_umesh":
-    importlib.reload(import_uasset)
-    importlib.reload(import_umat)
+if __name__ != "umesh":
+    importlib.reload(uasset)
+    importlib.reload(umat)
 
     #filepath = r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Meshes\SM_Door_Small_A.uasset"
     #filepath = r"F:\Projects\Unreal Projects\Assets\Content\VehicleVarietyPack\Meshes\SM_Truck_Box.uasset"

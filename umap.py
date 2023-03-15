@@ -6,10 +6,10 @@ from bpy_extras.io_utils import ImportHelper
 cur_dir = os.path.dirname(__file__)
 if cur_dir not in sys.path: sys.path.append(cur_dir)
 
-import import_uasset, import_umat, import_umesh
-from import_uasset import UAsset, Import, Export, Vector, Euler, FColor
-from import_umat import TryGetUMaterialImport
-from import_umesh import ImportStaticMeshUAsset
+import uasset, umat, umesh
+from uasset import UAsset, Import, Export, Vector, Euler, FColor
+from umat import TryGetUMaterialImport
+from umesh import ImportStaticMeshUAsset
 
 hide_noncasting = False
 deg2rad = math.radians(1)
@@ -244,10 +244,10 @@ try: unregister()
 except: pass
 register()
 
-if __name__ != "import_umap":
-    importlib.reload(import_uasset)
-    importlib.reload(import_umat)
-    importlib.reload(import_umesh)
+if __name__ != "umap":
+    importlib.reload(uasset)
+    importlib.reload(umat)
+    importlib.reload(umesh)
     #sys.settrace(None) # Disable debugging for faster runtime
 
     #LoadUMap(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary.umap", True, True)

@@ -5,8 +5,8 @@ from mathutils import *
 
 cur_dir = os.path.dirname(__file__)
 if cur_dir not in sys.path: sys.path.append(cur_dir)
-import import_uasset
-from import_uasset import UAsset, Import, Export, Properties
+import uasset
+from uasset import UAsset, Import, Export, Properties
 
 umodel_path = cur_dir + r"\umodel.exe"
 mute_ior = True
@@ -355,8 +355,8 @@ def TryGetUMaterialImport(mat_imp:Import, mesh):
             pass
     return mat
 
-if __name__ != "import_umat":
-    importlib.reload(import_uasset)
+if __name__ != "umat":
+    importlib.reload(uasset)
     for mat in bpy.data.materials: bpy.data.materials.remove(mat)
 
     #filepath = r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Materials\M_Base_Trim.uasset"

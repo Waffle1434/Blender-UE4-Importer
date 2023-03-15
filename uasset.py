@@ -490,7 +490,7 @@ class UAsset:
         return self
     def __exit__(self, *args): self.Close()
 
-if __name__ != "import_uasset":
+if __name__ != "uasset":
     #asset = UAsset(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Materials\M_Base_Trim.uasset")
     #asset = UAsset(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary.umap")
     #asset = UAsset(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Meshes\SM_Door_Small_A.uasset")
