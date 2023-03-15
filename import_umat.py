@@ -27,7 +27,7 @@ def TryGetExtractedImport(imp:Import, extract_dir):
         if not os.path.exists(extracted_path):
             asset_path = imp.asset.ToProjectPath(archive_path)
             extract_dir = os.path.join(extract_dir, "Game")
-            print(f"Extracting {umodel_path}")
+            print(f"Extracting {asset_path}")
             subprocess.run(f"\"{umodel_path}\" -export -png -out=\"{extract_dir}\" \"{asset_path}\"")
         try:
             imp.extracted = tex = bpy.data.images.load(extracted_path, check_existing=True)
