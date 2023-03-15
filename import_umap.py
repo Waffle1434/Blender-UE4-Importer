@@ -148,7 +148,7 @@ def ProcessUMapExport(export:Export, import_meshes=True, import_materials=True, 
                     if bp_path.startswith("/Engine/"): return
                     bp_asset = export.asset.import_cache.get(bp_path)
                     if not bp_asset:
-                        export.asset.import_cache[bp_path] = bp_asset = UAsset(export.asset.ToProjectPath(bp_path))
+                        export.asset.import_cache[bp_path] = bp_asset = UAsset(export.asset.ToProjectPath(bp_path), uproject=export.asset.uproject)
                         bp_asset.Read(False)
                         bp_asset.name2exp = {}
                         for exp in bp_asset.exports: bp_asset.name2exp[exp.object_name] = exp

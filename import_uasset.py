@@ -1,10 +1,9 @@
 from __future__ import annotations
-import io, uuid, time, os, pathlib
+import io, uuid, time, os, glob, json, winreg
 from struct import *
 from ctypes import *
 from mathutils import *
 
-engine_dir = r"F:\Epic Games\UE_4.27\Engine"
 logging = True
 try_unknown_structs = False
 
@@ -431,12 +430,19 @@ class USummary:
             for i in range(f.ReadInt32()): chunk_id = f.ReadInt32()
         elif version_ue4 >= 278: chunk_id = f.ReadInt32()
         if version_ue4 >= 507: self.preload_depends_desc = ArrayDesc(f)
+class UProject:
+    def __init__(self, uasset_path:str):
+        self.dir = os.path.normpath(uasset_path[:uasset_path.find("\\Content\\")])
+        uproject_file = next(glob.iglob(f'{self.dir}\\*.uproject'), None)
+        if uproject_file:
+            with open(uproject_file, 'r') as file: engine_version = json.load(file)['EngineAssociation']
+            self.engine_dir = winreg.QueryValueEx(winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, rf"SOFTWARE\EpicGames\Unreal Engine\{engine_version}"), "InstalledDirectory")[0] + "\\Engine\\"
 class UAsset:
-    def __init__(self, filepath:str, read_all=False):
+    def __init__(self, filepath:str, read_all=False, uproject=None):
         self.filepath = filepath
-        project_dir = filepath[:filepath.find("\\Content\\")]
-        self.project_dir = os.path.normpath(project_dir)
-        self.extract_dir = os.path.join(project_dir, "Export")
+        if uproject: self.uproject = uproject
+        else: self.uproject = UProject(filepath)
+        self.extract_dir = os.path.join(self.uproject.dir, "Export")
         self.read_all = read_all
     def __repr__(self) -> str: return f"\"{self.f.byte_stream.name}\", {len(self.imports)} Imports, {len(self.exports)} Exports"
     def GetImport(self, i) -> Import: return self.imports[-i - 1]
@@ -448,8 +454,8 @@ class UAsset:
         elif i > 0: return self.GetExport(i)
         else: return None #raise Exception("Invalid Package Index of 0")
     def ToProjectPath(self, path:str):
-        if path.startswith("/Game/"): return os.path.join(self.project_dir, "Content", path[6:]) + ".uasset"
-        elif path.startswith("/Engine/"): return os.path.join(engine_dir, "Content", path[8:]) + ".uasset"
+        if path.startswith("/Game/"): return os.path.join(self.uproject.dir, "Content", path[6:]) + ".uasset"
+        elif path.startswith("/Engine/"): return os.path.join(self.uproject.engine_dir, "Content", path[8:]) + ".uasset"
         else: raise
         
     def TryReadPropertyGuid(self) -> uuid.UUID: return self.f.ReadGuid() if self.summary.version_ue4 >= 503 and self.f.ReadBool() else None

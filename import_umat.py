@@ -27,12 +27,13 @@ def TryGetExtractedImport(imp:Import, extract_dir):
         if not os.path.exists(extracted_path):
             asset_path = imp.asset.ToProjectPath(archive_path)
             extract_dir = os.path.join(extract_dir, "Game")
+            print(f"Extracting {umodel_path}")
             subprocess.run(f"\"{umodel_path}\" -export -png -out=\"{extract_dir}\" \"{asset_path}\"")
         try:
             imp.extracted = tex = bpy.data.images.load(extracted_path, check_existing=True)
 
             tex_uasset_path = imp.asset.ToProjectPath(archive_path)
-            with UAsset(tex_uasset_path, False) as asset:
+            with UAsset(tex_uasset_path, uproject=imp.asset.uproject) as asset:
                 for export in asset.exports:
                     if export.export_class_type == 'Texture2D':
                         export.ReadProperties(False, False)
@@ -245,13 +246,13 @@ def SetNodeTexture(node, image):
         linked_node = links[0].to_node
         if linked_node.node_tree.name.startswith('RGBtoNormal'):
             linked_node.node_tree = bpy.data.node_groups['RGBtoNormal' if image.get('flip_y', False) else 'RGBtoNormalY-']
-def ImportUMaterial(filepath, mat_name=None, mesh=None, log=False): # TODO: return asset
+def ImportUMaterial(filepath, mat_name=None, mesh=None, uproject=None, log=False): # TODO: return asset
     t0 = time.time()
     if not os.path.exists(filepath):
         print(f"Error: \"{filepath}\" Does Not Exist!")
         return (None, None)
     TryAppendNodeGroups()
-    with UAsset(filepath, True) as asset:
+    with UAsset(filepath, True, uproject) as asset:
         for exp in asset.exports:
             classname = exp.export_class_type
             params = exp.properties
@@ -348,7 +349,7 @@ def TryGetUMaterialImport(mat_imp:Import, mesh):
     mat = bpy.data.materials.get(mat_imp.object_name)
     if not mat:
         umat_path = mat_imp.asset.ToProjectPath(mat_imp.import_ref.object_name)
-        try: mat, graph_data = ImportUMaterial(umat_path, mesh=mesh)
+        try: mat, graph_data = ImportUMaterial(umat_path, mesh=mesh, uproject=mat_imp.asset.uproject)
         except Exception as e:
             print(f"Failed to Import {mat_imp.object_name}: {e}")
             pass
