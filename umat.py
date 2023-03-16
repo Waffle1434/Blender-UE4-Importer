@@ -12,11 +12,11 @@ umodel_path = cur_dir + r"\umodel.exe"
 mute_ior = True
 mute_fresnel = True
 
-filepath = pathlib.Path(cur_dir) / "UE_nodes.blend"
-node_tree_path = filepath / "NodeTree"
+blend_filepath = pathlib.Path(cur_dir) / "UE_nodes.blend"
+node_tree_path = blend_filepath / "NodeTree"
 def TryAppendNodeGroups():
     if 'AdditiveSurface' not in bpy.data.node_groups:
-        with bpy.data.libraries.load(str(filepath)) as (data_from, data_to):
+        with bpy.data.libraries.load(str(blend_filepath)) as (data_from, data_to):
             for node_group in data_from.node_groups:
                 bpy.ops.wm.append(filepath=str(node_tree_path / node_group), directory=str(node_tree_path), filename=node_group, set_fake=True)
 
@@ -104,13 +104,13 @@ UE2BlenderNode_dict = {
     'MaterialExpressionComment'           : UE2BlenderNodeMapping('NodeFrame'),
     'MaterialExpressionFresnel'           : UE2BlenderNodeMapping('ShaderNodeFresnel', hide=False),
     'CheapContrast_RGB'                   : UE2BlenderNodeMapping('ShaderNodeBrightContrast', hide=False, inputs={'FunctionInputs':('Color','Contrast')}),
-    #'BlendAngleCorrectedNormals'          : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='BlendAngleCorrectedNormals', hide=False, inputs={'FunctionInputs':(0,1)}),
+    'BlendAngleCorrectedNormals'          : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='BlendAngleCorrectedNormals', hide=False, inputs={'FunctionInputs':(0,1)}),
+    'MaterialExpressionFunctionInput'     : UE2BlenderNodeMapping('NodeReroute', hide=False),
+    'MaterialExpressionFunctionOutput'    : UE2BlenderNodeMapping('NodeReroute', hide=False),
 }
 class_blacklist = { 'SceneThumbnailInfoWithPrimitive', 'MetaData', 'MaterialExpressionPanner' }
 material_classes = { 'Material', 'MaterialInstanceConstant' }
 node_whitelist = { 'ShaderNodeBsdfPrincipled', 'ShaderNodeOutputMaterial' }
-param_x = 'MaterialExpressionEditorX'
-param_y = 'MaterialExpressionEditorY'
 
 def DeDuplicateName(name):
     i = name.rfind('.')
@@ -120,7 +120,7 @@ def SetupNode(node_tree, name, mapping, node_data): # TODO: inline
     node = node_tree.nodes.new(mapping.bl_idname)
     node.name = name
     node.hide = mapping.hide
-    SetNodePos(node, param_x, param_y, node_data.export.properties)
+    SetNodePos(node, node_data.export.properties)
     if mapping.subtype:
         if mapping.bl_idname == 'ShaderNodeGroup': node.node_tree = bpy.data.node_groups[mapping.subtype]
         else: node.operation = mapping.subtype
@@ -135,7 +135,7 @@ def SetupNode(node_tree, name, mapping, node_data): # TODO: inline
                 rgb2n = node_tree.nodes.new('ShaderNodeGroup')
                 rgb2n.node_tree = bpy.data.node_groups['RGBtoNormalY-']
                 rgb2n.hide = True
-                SetNodePos(rgb2n, param_x, param_y, node_data.export.properties)
+                SetNodePos(rgb2n, node_data.export.properties)
                 rgb2n.location += Vector((0,30))
                 node_tree.links.new(node.outputs['Color'], rgb2n.inputs['RGB'])
                 rgb_in = rgb2n.outputs['Normal']
@@ -150,8 +150,8 @@ def SetupNode(node_tree, name, mapping, node_data): # TODO: inline
         case 'ShaderNodeMixRGB':
             node.inputs['Fac'].default_value = 0
     return node
-def SetNodePos(node, param_x, param_y, params:Properties): node.location = (params.TryGetValue(param_x,0), -params.TryGetValue(param_y,0))
-def CreateNode(exp:Export, mat, nodes_data:dict[str,NodeData], graph_data, mesh):
+def SetNodePos(node, params:Properties, param_x='MaterialExpressionEditorX', param_y='MaterialExpressionEditorY'): node.location = (params.TryGetValue(param_x,0), -params.TryGetValue(param_y,0))
+def CreateNode(exp:Export, node_tree, nodes_data:dict[str,NodeData], graph_data, mesh):
     name = exp.object_name
     classname = exp.export_class_type # TODO: inline?
     nodes_data[name] = node_data = NodeData(exp)
@@ -160,7 +160,11 @@ def CreateNode(exp:Export, mat, nodes_data:dict[str,NodeData], graph_data, mesh)
     if classname in class_blacklist: return None # TODO: iterate material expression array instead?
 
     if classname == 'MaterialExpressionMaterialFunctionCall': # TODO: import subtree from unreal directory
-        classname = params.TryGetValue('MaterialFunction').object_name
+        matfnc_imp = params.TryGetValue('MaterialFunction')
+        classname = matfnc_imp.object_name
+        if classname not in UE2BlenderNode_dict:
+            matfnc_subtype = ImportMaterialFunction(matfnc_imp)
+            UE2BlenderNode_dict[classname] = UE2BlenderNodeMapping('ShaderNodeGroup', matfnc_subtype, hide=False)
     node_data.classname = classname
 
     mapping = UE2BlenderNode_dict.get(classname)
@@ -168,7 +172,7 @@ def CreateNode(exp:Export, mat, nodes_data:dict[str,NodeData], graph_data, mesh)
         print(f"UNKNOWN UMAT CLASS: {classname}")
         mapping = default_mapping
     
-    node_data.node = node = SetupNode(mat.node_tree, name, mapping, node_data)
+    node_data.node = node = SetupNode(node_tree, name, mapping, node_data)
 
     sx, sy = (params.TryGetValue('SizeX'), params.TryGetValue('SizeY'))
     if sx != None: node.width = sx
@@ -207,7 +211,7 @@ def CreateNode(exp:Export, mat, nodes_data:dict[str,NodeData], graph_data, mesh)
     expr_guid = params.TryGetValue('ExpressionGUID')
     if expr_guid: graph_data.node_guids[expr_guid] = node_data
     return node_data
-def LinkSocket(mat, nodes_data:dict[str,NodeData], node_data:NodeData, expr:Import, property, dst_index):
+def LinkSocket(node_tree, nodes_data:dict[str,NodeData], node_data:NodeData, expr:Import, property, dst_index):
     link_node_exp = expr.value.node if expr.struct_type == 'ExpressionInput' else expr.value
     link_node_data = nodes_data.get(link_node_exp.object_name)
     if link_node_data:
@@ -223,11 +227,11 @@ def LinkSocket(mat, nodes_data:dict[str,NodeData], node_data:NodeData, expr:Impo
         dst_socket = node.inputs[dst_index]
         if node_data.input_remap and property in node_data.input_remap: dst_socket = node_data.input_remap[property]
         if src_socket and dst_socket:
-            link = mat.node_tree.links.new(src_socket, dst_socket)
+            link = node_tree.links.new(src_socket, dst_socket)
             if mute_fresnel and src_socket.node.bl_idname == 'ShaderNodeFresnel': link.is_muted = True
         else: print(f"FAILED LINK: {node.name}.{property}")
     else: print(f"Link Failed, Missing Node: {str(link_node_exp.object_name)}")
-def LinkSockets(mat, nodes_data:dict[str,NodeData], node_data:NodeData):
+def LinkSockets(node_tree, nodes_data:dict[str,NodeData], node_data:NodeData):
     mapping = UE2BlenderNode_dict.get(node_data.classname)
     if mapping and mapping.inputs:
         for property, map_val in mapping.inputs.items():
@@ -236,9 +240,9 @@ def LinkSockets(mat, nodes_data:dict[str,NodeData], node_data:NodeData):
                 if callable(map_val): map_val(expr, nodes_data, node_data)
                 else:
                     match expr.type:
-                        case 'StructProperty': LinkSocket(mat, nodes_data, node_data, expr, property, map_val)
+                        case 'StructProperty': LinkSocket(node_tree, nodes_data, node_data, expr, property, map_val)
                         case 'ArrayProperty':
-                            for i, elem in enumerate(expr.value): LinkSocket(mat, nodes_data, node_data, elem['Input'], i, map_val[i])
+                            for i, elem in enumerate(expr.value): LinkSocket(node_tree, nodes_data, node_data, elem['Input'], i, map_val[i])
 def SetNodeTexture(node, image):
     node.image = image
     links = node.outputs['Color'].links
@@ -246,14 +250,17 @@ def SetNodeTexture(node, image):
         linked_node = links[0].to_node
         if linked_node.node_tree.name.startswith('RGBtoNormal'):
             linked_node.node_tree = bpy.data.node_groups['RGBtoNormal' if image.get('flip_y', False) else 'RGBtoNormalY-']
-def ImportMaterialFunction():
-    print("!")
-def ImportUMaterial(filepath, mat_name=None, mesh=None, uproject=None, log=False): # TODO: return asset
+def ImportMaterialFunction(mat_fnc_imp:Import):
+    node_graph_name = mat_fnc_imp.object_name
+    if node_graph_name not in bpy.data.node_groups: ImportNodeGraph(mat_fnc_imp.asset.ToProjectPath(mat_fnc_imp.import_ref.object_name), mat_fnc_imp.asset.uproject)
+    return node_graph_name
+def ImportNodeGraph(filepath, uproject=None, name=None, mesh=None, log=False): # TODO: return asset?
     t0 = time.time()
     if not os.path.exists(filepath):
         print(f"Error: \"{filepath}\" Does Not Exist!")
         return (None, None)
     TryAppendNodeGroups()
+    out = None
     with UAsset(filepath, True, uproject) as asset:
         for exp in asset.exports:
             classname = exp.export_class_type
@@ -263,19 +270,19 @@ def ImportUMaterial(filepath, mat_name=None, mesh=None, uproject=None, log=False
                     graph_data = GraphData() # TODO: replace with attributes on export?
                     nodes_data = graph_data.nodes_data
 
-                    if not mat_name: mat_name = exp.object_name
-                    mat = bpy.data.materials.new(mat_name)
+                    if not name: name = exp.object_name
+                    out = mat = bpy.data.materials.new(name)
                     mat.use_nodes = True
                     mat["UAsset"] = asset.f.byte_stream.name
                     node_tree = mat.node_tree
                     node = node_tree.nodes['Principled BSDF']
-                    SetNodePos(node, 'EditorX', 'EditorY', params)
+                    SetNodePos(node, params, 'EditorX', 'EditorY')
                     node_tree.nodes['Material Output'].location = node.location + Vector((300,0))
                     node_data = NodeData(exp, node=node)
 
-                    for exr_exp in params.TryGetValue('Expressions', ()): CreateNode(exr_exp.value, mat, nodes_data, graph_data, mesh)
+                    for exr_exp in params.TryGetValue('Expressions', ()): CreateNode(exr_exp.value, node_tree, nodes_data, graph_data, mesh)
                     for comment_exp in params.TryGetValue('EditorComments', ()):
-                        comment_node = CreateNode(comment_exp.value, mat, nodes_data, graph_data, mesh).node
+                        comment_node = CreateNode(comment_exp.value, node_tree, nodes_data, graph_data, mesh).node
                         for eval_node in filter(lambda n: not n.parent, node_tree.nodes):
                             diff = eval_node.location - comment_node.location
                             if diff.x > 0 and diff.x < comment_node.width and diff.y < 0 and diff.y > -comment_node.height: eval_node.parent = comment_node
@@ -312,16 +319,17 @@ def ImportUMaterial(filepath, mat_name=None, mesh=None, uproject=None, log=False
                         node_data.input_remap = { 'Normal':n2rgb.inputs['Normal'] }
 
                     for name in nodes_data:
-                        LinkSockets(mat, nodes_data, nodes_data[name]) # TODO: this iterates nodes without links!
-                    LinkSockets(mat, nodes_data, node_data)
+                        LinkSockets(node_tree, nodes_data, nodes_data[name]) # TODO: this iterates nodes without links!
+                    LinkSockets(node_tree, nodes_data, node_data)
                     
                     ior = node.inputs['IOR']
                     if ior.is_linked: ior.links[0].is_muted = mute_ior
                 case 'MaterialInstanceConstant':
                     mat_parent = params.TryGetValue('Parent')
                     mat_path = asset.ToProjectPath(mat_parent.import_ref.object_name)
-                    if not mat_name: mat_name = exp.object_name # TODO: unify
-                    mat, graph_data = ImportUMaterial(mat_path, mat_name, mesh) # TODO: handle not found
+                    if not name: name = exp.object_name # TODO: unify
+                    mat, graph_data = ImportNodeGraph(mat_path, uproject, name, mesh) # TODO: handle not found
+                    out = mat
 
                     for param in params.TryGetValue('ScalarParameterValues', ()):
                         node_data = graph_data.node_guids.get(param.value.TryGetValue('ExpressionGUID'))
@@ -344,14 +352,23 @@ def ImportUMaterial(filepath, mat_name=None, mesh=None, uproject=None, log=False
                                     for tex_node in tex_node_data.linked_tex_nodes: SetNodeTexture(tex_node, tex)
 
                             else: print(f"Missing Texture \"{tex_imp.import_ref.object_name}\"")
+                case 'MaterialFunction': # TODO: very similar to Material, merge?
+                    out = node_tree = bpy.data.node_groups.new(exp.object_name, 'ShaderNodeTree')
+                    graph_data = GraphData() # TODO: replace with attributes on export?
+                    nodes_data = graph_data.nodes_data
+                    
+                    for exr_exp in params.TryGetValue('FunctionExpressions', ()): CreateNode(exr_exp.value, node_tree, nodes_data, graph_data, None)
+
+                    for name in nodes_data: LinkSockets(node_tree, nodes_data, nodes_data[name]) # TODO: this iterates nodes without links!
+                    #LinkSockets(node_tree, nodes_data, node_data)
     
     if log: print(f"Imported {mat.name}: {(time.time() - t0) * 1000:.2f}ms")
-    return (mat, graph_data)
+    return (out, graph_data)
 def TryGetUMaterialImport(mat_imp:Import, mesh):
     mat = bpy.data.materials.get(mat_imp.object_name)
     if not mat:
         umat_path = mat_imp.asset.ToProjectPath(mat_imp.import_ref.object_name)
-        try: mat, graph_data = ImportUMaterial(umat_path, mesh=mesh, uproject=mat_imp.asset.uproject)
+        try: mat, graph_data = ImportNodeGraph(umat_path, mat_imp.asset.uproject, mesh=mesh)
         except Exception as e:
             print(f"Failed to Import {mat_imp.object_name}: {e}")
             pass
@@ -360,8 +377,10 @@ def TryGetUMaterialImport(mat_imp:Import, mesh):
 if __name__ != "umat":
     importlib.reload(uasset)
     for mat in bpy.data.materials: bpy.data.materials.remove(mat)
+    for group in bpy.data.node_groups: bpy.data.node_groups.remove(group)
 
     #filepath = r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Materials\M_Base_Trim.uasset"
-    filepath = r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Materials\MI_Trim_A_Red2.uasset"
-    ImportUMaterial(filepath)
+    #filepath = r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Materials\MI_Trim_A_Red2.uasset"
+    filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\NewMaterial.uasset"
+    ImportNodeGraph(filepath)
     print("Done")

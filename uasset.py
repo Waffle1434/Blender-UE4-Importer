@@ -109,7 +109,8 @@ class FStripDataFlags(PrintableStruct): _fields_ = ( ('global_strip_flags', c_ub
 prop_table_types = { "ExpressionOutput", "ScalarParameterValue", "TextureParameterValue", "VectorParameterValue", "MaterialFunctionInfo", "StaticMaterial", "KAggregateGeom", "BodyInstance", 
                     "KConvexElem", "Transform", "StaticMeshSourceModel", "MeshBuildSettings", "MeshReductionSettings", "MeshUVChannelInfo", "AssetEditorOrbitCameraPosition", "SimpleMemberReference", 
                     "CollisionResponse", "ResponseChannel", "StreamingTextureBuildInfo", "BuilderPoly", "PostProcessSettings", "LevelViewportInfo", "MaterialProxySettings", "MeshProxySettings",
-                    "MeshMergingSettings", "HierarchicalSimplification", "Timeline", "TimelineFloatTrack", "ParameterGroupData", "MaterialParameterInfo", "MaterialInstanceBasePropertyOverrides" }
+                    "MeshMergingSettings", "HierarchicalSimplification", "Timeline", "TimelineFloatTrack", "ParameterGroupData", "MaterialParameterInfo", "MaterialInstanceBasePropertyOverrides", 
+                    "MaterialCachedExpressionData" }
 prop_table_blacklist = { "MaterialTextureInfo" }
 struct_map = { "Vector":FVector, "Rotator":FVector, "Vector4":FVector4, "IntPoint":FIntPoint, "Quat":FQuat, "Box":FBox, "Color":FColor, "LinearColor":FLinearColor, "BoxSphereBounds":FBoxSphereBounds }
 
