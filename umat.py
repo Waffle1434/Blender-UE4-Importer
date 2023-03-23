@@ -46,12 +46,13 @@ def TryGetExtractedImport(imp:Import, extract_dir):
     return imp.extracted
 
 class UE2BlenderNodeMapping():
-    def __init__(self, bl_idname, subtype=None, label=None, hide=True, inputs=None, outputs=None, color=None):
+    def __init__(self, bl_idname, subtype=None, label=None, hide=True, inputs=None, defaults=None, outputs=None, color=None):
         self.bl_idname = bl_idname
         self.subtype = subtype
         self.label = label
         self.hide = hide
         self.inputs = inputs
+        self.defaults = defaults
         self.outputs = outputs
         self.color = color
 class NodeData():
@@ -84,12 +85,17 @@ def HandleTextureObject(expr:Import, nodes_data:dict[str,NodeData], node_data:No
 default_mapping = UE2BlenderNodeMapping('ShaderNodeMath', label="UNKNOWN", color=Color((1,0,0)))
 UE2BlenderNode_dict = {
     'Material' : UE2BlenderNodeMapping('ShaderNodeBsdfPrincipled', hide=False, inputs={ 'BaseColor':'Base Color','Metallic':'Metallic','Specular':'Specular','Roughness':'Roughness',
-                                       'EmissiveColor':'Emission','Opacity':'Alpha','OpacityMask':'Alpha','Normal':'Normal','Refraction':'IOR' }),
-    'MaterialExpressionAdd'               : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='ADD', inputs={'A':0,'B':1}),
-    'MaterialExpressionMultiply'          : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='MULTIPLY', inputs={'A':0,'B':1}),
-    'MaterialExpressionConstant'          : UE2BlenderNodeMapping('ShaderNodeValue', hide=False),
+                                       'EmissiveColor':'Emission','Opacity':'Alpha','OpacityMask':'Alpha','Normal':'Normal','Refraction':'IOR' }, defaults={'BaseColor':(0,0,0,1)}),
+    'MaterialExpressionAdd'               : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='ADD', inputs={'A':0,'B':1}, defaults={'A':0,'B':1}),
+    'MaterialExpressionSubtract'          : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='SUBTRACT', inputs={'A':0,'B':1}, defaults={'A':0,'B':1}),
+    'MaterialExpressionMultiply'          : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='MULTIPLY', inputs={'A':0,'B':1}, defaults={'A':0,'B':1}),
+    'MaterialExpressionDivide'            : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='DIVIDE', inputs={'A':0,'B':1}, defaults={'A':1,'B':2}),
+    'MaterialExpressionAbs'               : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='ABSOLUTE', inputs={'Input':0}),
     'MaterialExpressionScalarParameter'   : UE2BlenderNodeMapping('ShaderNodeValue', hide=False),
+    'MaterialExpressionConstant'          : UE2BlenderNodeMapping('ShaderNodeValue', hide=False),
+    'MaterialExpressionConstant2Vector'   : UE2BlenderNodeMapping('ShaderNodeCombineXYZ', hide=False),
     'MaterialExpressionConstant3Vector'   : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='RGBA', hide=False, outputs={'RGB':0,'R':1,'G':2,'B':3,'A':4}),
+    'MaterialExpressionConstant4Vector'   : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='RGBA', hide=False), #outputs={'R':1,'G':2,'B':3,'A':4}
     'MaterialExpressionVectorParameter'   : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='RGBA', hide=False, outputs={'RGB':0,'R':1,'G':2,'B':3,'A':4}),
     'MaterialExpressionStaticSwitchParameter' : UE2BlenderNodeMapping('ShaderNodeMixRGB', label="Switch", hide=False, inputs={'A':2,'B':1}),
     'MaterialExpressionAppendVector'      : UE2BlenderNodeMapping('ShaderNodeCombineXYZ', label="Append", inputs={'A':0,'B':1}),
@@ -151,6 +157,16 @@ def SetupNode(node_tree, name, mapping, node_data): # TODO: inline
             node.inputs['Fac'].default_value = 0
     return node
 def SetNodePos(node, params:Properties, param_x='MaterialExpressionEditorX', param_y='MaterialExpressionEditorY'): node.location = (params.TryGetValue(param_x,0), -params.TryGetValue(param_y,0))
+def HandleDefaults(mapping, node, params):
+    if mapping.defaults:
+        for ue_name, default_value in mapping.defaults.items():
+            HandleConstant(node, params, ue_name, mapping.inputs[ue_name], default_value)
+def HandleConstant(node, params, name, i, default):
+    if name not in params:
+        value =  params.TryGetValue(f'Const{name}', default)
+        if value != None:
+            socket = node.inputs[i]
+            socket.default_value = (value, value, value) if socket.type == 'VECTOR' else value
 def CreateNode(exp:Export, node_tree, nodes_data:dict[str,NodeData], graph_data, mesh):
     name = exp.object_name
     classname = exp.export_class_type # TODO: inline?
@@ -180,6 +196,9 @@ def CreateNode(exp:Export, node_tree, nodes_data:dict[str,NodeData], graph_data,
     txt, param_name = (params.TryGetValue('Text'), params.TryGetValue('ParameterName'))
     if txt: node.label = txt
     elif param_name: node.label = param_name
+
+    HandleDefaults(mapping, node, params)
+
     value = params.TryGetValue('DefaultValue')
     if value == None: value = params.TryGetValue('Constant')
     if value != None: # TODO: move to mapping class?
@@ -191,6 +210,17 @@ def CreateNode(exp:Export, node_tree, nodes_data:dict[str,NodeData], graph_data,
                 node.inputs['A'].default_value = value.a
             case 'MaterialExpressionStaticSwitchParameter':
                 node.inputs['Fac'].default_value = 1 if value else 0
+    else:
+        match classname:
+            case 'MaterialExpressionConstant':
+                r = params.TryGetValue('R', 0)
+                node.outputs[0].default_value = r
+            case 'MaterialExpressionConstant2Vector':
+                r = params.TryGetValue('R', 0)
+                g = params.TryGetValue('G', 0)
+                node.inputs[0].default_value = r
+                node.inputs[1].default_value = g
+                node.inputs[2].hide = True
     match classname:
         case 'MaterialExpressionTextureCoordinate':
             uv_i = params.TryGetValue('CoordinateIndex')
@@ -277,6 +307,7 @@ def ImportNodeGraph(filepath, uproject=None, name=None, mesh=None, log=False): #
                     node_tree = mat.node_tree
                     node = node_tree.nodes['Principled BSDF']
                     SetNodePos(node, params, 'EditorX', 'EditorY')
+                    HandleDefaults(UE2BlenderNode_dict['Material'], node, params)
                     node_tree.nodes['Material Output'].location = node.location + Vector((300,0))
                     node_data = NodeData(exp, node=node)
 
@@ -381,6 +412,7 @@ if __name__ != "umat":
 
     #filepath = r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Materials\M_Base_Trim.uasset"
     #filepath = r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Materials\MI_Trim_A_Red2.uasset"
-    filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\NewMaterial.uasset"
+    #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\NewMaterial.uasset"
+    filepath = r"F:\Projects\Unreal Projects\Assets\Content\Test1434.uasset"
     ImportNodeGraph(filepath)
     print("Done")
