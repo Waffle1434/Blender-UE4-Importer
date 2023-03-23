@@ -46,15 +46,17 @@ def TryGetExtractedImport(imp:Import, extract_dir):
     return imp.extracted
 
 class UE2BlenderNodeMapping():
-    def __init__(self, bl_idname, subtype=None, label=None, hide=True, inputs=None, defaults=None, outputs=None, color=None):
+    def __init__(self, bl_idname, subtype=None, label=None, hide=True, inputs=None, constants=None, defaults=None, outputs=None, color=None, width=None):
         self.bl_idname = bl_idname
         self.subtype = subtype
         self.label = label
         self.hide = hide
         self.inputs = inputs
+        self.constants = constants
         self.defaults = defaults
         self.outputs = outputs
         self.color = color
+        self.width = width
 class NodeData():
     def __init__(self, export, classname=None, node=None, link_indirect=None, input_remap=None):
         self.export = export
@@ -86,13 +88,22 @@ default_mapping = UE2BlenderNodeMapping('ShaderNodeMath', label="UNKNOWN", color
 UE2BlenderNode_dict = {
     'Material' : UE2BlenderNodeMapping('ShaderNodeBsdfPrincipled', hide=False, inputs={ 'BaseColor':'Base Color','Metallic':'Metallic','Specular':'Specular','Roughness':'Roughness',
                                        'EmissiveColor':'Emission','Opacity':'Alpha','OpacityMask':'Alpha','Normal':'Normal','Refraction':'IOR' }, defaults={'BaseColor':(0,0,0,1)}),
-    'MaterialExpressionAdd'               : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='ADD', inputs={'A':0,'B':1}, defaults={'A':0,'B':1}),
-    'MaterialExpressionSubtract'          : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='SUBTRACT', inputs={'A':0,'B':1}, defaults={'A':0,'B':1}),
-    'MaterialExpressionMultiply'          : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='MULTIPLY', inputs={'A':0,'B':1}, defaults={'A':0,'B':1}),
-    'MaterialExpressionDivide'            : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='DIVIDE', inputs={'A':0,'B':1}, defaults={'A':1,'B':2}),
-    'MaterialExpressionAbs'               : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='ABSOLUTE', inputs={'Input':0}),
-    'MaterialExpressionScalarParameter'   : UE2BlenderNodeMapping('ShaderNodeValue', hide=False),
-    'MaterialExpressionConstant'          : UE2BlenderNodeMapping('ShaderNodeValue', hide=False),
+    'MaterialExpressionAdd'               : UE2BlenderNodeMapping('ShaderNodeVectorMath', width=100, subtype='ADD', inputs={'A':0,'B':1}, defaults={'A':0,'B':1}),
+    'MaterialExpressionSubtract'          : UE2BlenderNodeMapping('ShaderNodeVectorMath', width=100, subtype='SUBTRACT', inputs={'A':0,'B':1}, defaults={'A':0,'B':1}),
+    'MaterialExpressionMultiply'          : UE2BlenderNodeMapping('ShaderNodeVectorMath', width=100, subtype='MULTIPLY', inputs={'A':0,'B':1}, defaults={'A':0,'B':1}),
+    'MaterialExpressionDivide'            : UE2BlenderNodeMapping('ShaderNodeVectorMath', width=100, subtype='DIVIDE', inputs={'A':0,'B':1}, defaults={'A':1,'B':2}),
+    'MaterialExpressionAbs'               : UE2BlenderNodeMapping('ShaderNodeVectorMath', width=100, subtype='ABSOLUTE', inputs={'Input':0}),
+    'MaterialExpressionSine'              : UE2BlenderNodeMapping('ShaderNodeGroup', width=100, subtype='Sine', inputs={'Input':0}, constants={'Period':('Period',1)}, hide=False),
+    'MaterialExpressionCosine'            : UE2BlenderNodeMapping('ShaderNodeGroup', width=100, subtype='Cosine', inputs={'Input':0}, constants={'Period':('Period',1)}, hide=False),
+    'MaterialExpressionTangent'           : UE2BlenderNodeMapping('ShaderNodeGroup', width=100, subtype='Tangent', inputs={'Input':0}, constants={'Period':('Period',1)}, hide=False),
+    'MaterialExpressionArcsine'           : UE2BlenderNodeMapping('ShaderNodeMath', width=100, subtype='ARCSINE', inputs={'Input':0}),
+    'MaterialExpressionArccosine'         : UE2BlenderNodeMapping('ShaderNodeMath', width=100, subtype='ARCCOSINE', inputs={'Input':0}),
+    'MaterialExpressionArctangent'        : UE2BlenderNodeMapping('ShaderNodeMath', width=100, subtype='ARCTANGENT', inputs={'Input':0}),
+    'MaterialExpressionArcsineFast'       : UE2BlenderNodeMapping('ShaderNodeMath', width=100, subtype='ARCSINE', inputs={'Input':0}),
+    'MaterialExpressionArccosineFast'     : UE2BlenderNodeMapping('ShaderNodeMath', width=100, subtype='ARCCOSINE', inputs={'Input':0}),
+    'MaterialExpressionArctangentFast'    : UE2BlenderNodeMapping('ShaderNodeMath', width=100, subtype='ARCTANGENT', inputs={'Input':0}),
+    'MaterialExpressionScalarParameter'   : UE2BlenderNodeMapping('ShaderNodeValue', width=100, hide=False),
+    'MaterialExpressionConstant'          : UE2BlenderNodeMapping('ShaderNodeValue', width=100, hide=False),
     'MaterialExpressionConstant2Vector'   : UE2BlenderNodeMapping('ShaderNodeCombineXYZ', hide=False),
     'MaterialExpressionConstant3Vector'   : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='RGBA', hide=False, outputs={'RGB':0,'R':1,'G':2,'B':3,'A':4}),
     'MaterialExpressionConstant4Vector'   : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='RGBA', hide=False), #outputs={'R':1,'G':2,'B':3,'A':4}
@@ -122,7 +133,7 @@ def DeDuplicateName(name):
     i = name.rfind('.')
     return name[:i] if i >= 0 else name
 def GuessBaseDir(filename): return filename[:filename.find("Game")] # Unreal defaults to starting path with "Game" on asset export
-def SetupNode(node_tree, name, mapping, node_data): # TODO: inline
+def SetupNode(node_tree, name, mapping, node_data) -> bpy.types.ShaderNode: # TODO: inline
     node = node_tree.nodes.new(mapping.bl_idname)
     node.name = name
     node.hide = mapping.hide
@@ -192,12 +203,20 @@ def CreateNode(exp:Export, node_tree, nodes_data:dict[str,NodeData], graph_data,
 
     sx, sy = (params.TryGetValue('SizeX'), params.TryGetValue('SizeY'))
     if sx != None: node.width = sx
+    elif mapping.width: node.width = mapping.width
     if sy != None: node.height = sy
     txt, param_name = (params.TryGetValue('Text'), params.TryGetValue('ParameterName'))
     if txt: node.label = txt
     elif param_name: node.label = param_name
 
     HandleDefaults(mapping, node, params)
+    if mapping.constants:
+        for ue_name, const in mapping.constants.items():
+            bl_name, const_default = const
+            const_val = params.TryGetValue(ue_name, const_default)
+            node.inputs[bl_name].default_value = const_val
+
+    if mapping.bl_idname == 'ShaderNodeGroup': node.show_options = False
 
     value = params.TryGetValue('DefaultValue')
     if value == None: value = params.TryGetValue('Constant')
