@@ -46,7 +46,7 @@ def TryGetExtractedImport(imp:Import, extract_dir):
     return imp.extracted
 
 class UE2BlenderNodeMapping():
-    def __init__(self, bl_idname, subtype=None, label=None, hide=True, inputs=None, constants=None, defaults=None, outputs=None, color=None, width=None):
+    def __init__(self, bl_idname, subtype=None, label=None, hide=True, inputs=None, constants=None, defaults=None, outputs=None, color=None, width=100):
         self.bl_idname = bl_idname
         self.subtype = subtype
         self.label = label
@@ -86,44 +86,62 @@ def HandleTextureObject(expr:Import, nodes_data:dict[str,NodeData], node_data:No
 
 default_mapping = UE2BlenderNodeMapping('ShaderNodeMath', label="UNKNOWN", color=Color((1,0,0)))
 UE2BlenderNode_dict = {
-    'Material' : UE2BlenderNodeMapping('ShaderNodeBsdfPrincipled', hide=False, inputs={ 'BaseColor':'Base Color','Metallic':'Metallic','Specular':'Specular','Roughness':'Roughness',
+    'Material' : UE2BlenderNodeMapping('ShaderNodeBsdfPrincipled', hide=False, width=None, inputs={ 'BaseColor':'Base Color','Metallic':'Metallic','Specular':'Specular','Roughness':'Roughness',
                                        'EmissiveColor':'Emission','Opacity':'Alpha','OpacityMask':'Alpha','Normal':'Normal','Refraction':'IOR' }, defaults={'BaseColor':(0,0,0,1)}),
-    'MaterialExpressionAdd'               : UE2BlenderNodeMapping('ShaderNodeVectorMath', width=100, subtype='ADD', inputs={'A':0,'B':1}, defaults={'A':0,'B':1}),
-    'MaterialExpressionSubtract'          : UE2BlenderNodeMapping('ShaderNodeVectorMath', width=100, subtype='SUBTRACT', inputs={'A':0,'B':1}, defaults={'A':0,'B':1}),
-    'MaterialExpressionMultiply'          : UE2BlenderNodeMapping('ShaderNodeVectorMath', width=100, subtype='MULTIPLY', inputs={'A':0,'B':1}, defaults={'A':0,'B':1}),
-    'MaterialExpressionDivide'            : UE2BlenderNodeMapping('ShaderNodeVectorMath', width=100, subtype='DIVIDE', inputs={'A':0,'B':1}, defaults={'A':1,'B':2}),
-    'MaterialExpressionAbs'               : UE2BlenderNodeMapping('ShaderNodeVectorMath', width=100, subtype='ABSOLUTE', inputs={'Input':0}),
-    'MaterialExpressionSine'              : UE2BlenderNodeMapping('ShaderNodeGroup', width=100, subtype='Sine', inputs={'Input':0}, constants={'Period':('Period',1)}, hide=False),
-    'MaterialExpressionCosine'            : UE2BlenderNodeMapping('ShaderNodeGroup', width=100, subtype='Cosine', inputs={'Input':0}, constants={'Period':('Period',1)}, hide=False),
-    'MaterialExpressionTangent'           : UE2BlenderNodeMapping('ShaderNodeGroup', width=100, subtype='Tangent', inputs={'Input':0}, constants={'Period':('Period',1)}, hide=False),
-    'MaterialExpressionArcsine'           : UE2BlenderNodeMapping('ShaderNodeMath', width=100, subtype='ARCSINE', inputs={'Input':0}),
-    'MaterialExpressionArccosine'         : UE2BlenderNodeMapping('ShaderNodeMath', width=100, subtype='ARCCOSINE', inputs={'Input':0}),
-    'MaterialExpressionArctangent'        : UE2BlenderNodeMapping('ShaderNodeMath', width=100, subtype='ARCTANGENT', inputs={'Input':0}),
-    'MaterialExpressionArcsineFast'       : UE2BlenderNodeMapping('ShaderNodeMath', width=100, subtype='ARCSINE', inputs={'Input':0}),
-    'MaterialExpressionArccosineFast'     : UE2BlenderNodeMapping('ShaderNodeMath', width=100, subtype='ARCCOSINE', inputs={'Input':0}),
-    'MaterialExpressionArctangentFast'    : UE2BlenderNodeMapping('ShaderNodeMath', width=100, subtype='ARCTANGENT', inputs={'Input':0}),
-    'MaterialExpressionScalarParameter'   : UE2BlenderNodeMapping('ShaderNodeValue', width=100, hide=False),
-    'MaterialExpressionConstant'          : UE2BlenderNodeMapping('ShaderNodeValue', width=100, hide=False),
+    'MaterialExpressionAdd'               : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='ADD', inputs={'A':0,'B':1}, defaults={'A':0,'B':1}),
+    'MaterialExpressionSubtract'          : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='SUBTRACT', inputs={'A':0,'B':1}, defaults={'A':0,'B':1}),
+    'MaterialExpressionMultiply'          : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='MULTIPLY', inputs={'A':0,'B':1}, defaults={'A':0,'B':1}),
+    'MaterialExpressionDivide'            : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='DIVIDE', inputs={'A':0,'B':1}, defaults={'A':1,'B':2}),
+    'MaterialExpressionPower'             : UE2BlenderNodeMapping('ShaderNodeMath', subtype='POWER', inputs={'Base':0,'Exponent':1}, defaults={'Exponent':2}),
+    'MaterialExpressionAbs'               : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='ABSOLUTE', inputs={'Input':0}),
+    'MaterialExpressionFrac'              : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='FRACTION', inputs={'Input':0}),
+    'MaterialExpressionFmod'              : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='MODULO', inputs={'A':0,'B':1}),
+    'MaterialExpressionCeil'              : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='CEIL', inputs={'Input':0}),
+    'MaterialExpressionFloor'             : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='FLOOR', inputs={'Input':0}),
+    'MaterialExpressionRound'             : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='Round', inputs={'Input':0}),
+    'MaterialExpressionOneMinus'          : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='SUBTRACT', inputs={'A':0,'Input':1}, defaults={'A':1}, label="1-x"),
+    'MaterialExpressionMin'               : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='MINIMUM', inputs={'A':0,'B':1}, defaults={'A':0,'B':1}),
+    'MaterialExpressionMax'               : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='MAXIMUM', inputs={'A':0,'B':1}, defaults={'A':0,'B':1}),
+    'MaterialExpressionClamp'             : UE2BlenderNodeMapping('ShaderNodeClamp', inputs={'Input':0,'Min':1,'Max':2}),
+
+    'MaterialExpressionDotProduct'        : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='DOT_PRODUCT', inputs={'A':0,'B':1}, label="Dot"),
+    'MaterialExpressionCrossProduct'      : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='CROSS_PRODUCT', inputs={'A':0,'B':1}, label="Cross"),
+    'MaterialExpressionNormalize'         : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='NORMALIZE', inputs={'VectorInput':0}),
+
+    'MaterialExpressionSine'              : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='Sine', inputs={'Input':0}, constants={'Period':('Period',1)}, hide=False),
+    'MaterialExpressionCosine'            : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='Cosine', inputs={'Input':0}, constants={'Period':('Period',1)}, hide=False),
+    'MaterialExpressionTangent'           : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='Tangent', inputs={'Input':0}, constants={'Period':('Period',1)}, hide=False),
+    'MaterialExpressionArcsine'           : UE2BlenderNodeMapping('ShaderNodeMath', subtype='ARCSINE', inputs={'Input':0}),
+    'MaterialExpressionArccosine'         : UE2BlenderNodeMapping('ShaderNodeMath', subtype='ARCCOSINE', inputs={'Input':0}),
+    'MaterialExpressionArctangent'        : UE2BlenderNodeMapping('ShaderNodeMath', subtype='ARCTANGENT', inputs={'Input':0}),
+    'MaterialExpressionArcsineFast'       : UE2BlenderNodeMapping('ShaderNodeMath', subtype='ARCSINE', inputs={'Input':0}),
+    'MaterialExpressionArccosineFast'     : UE2BlenderNodeMapping('ShaderNodeMath', subtype='ARCCOSINE', inputs={'Input':0}),
+    'MaterialExpressionArctangentFast'    : UE2BlenderNodeMapping('ShaderNodeMath', subtype='ARCTANGENT', inputs={'Input':0}),
+
+    'MaterialExpressionScalarParameter'   : UE2BlenderNodeMapping('ShaderNodeValue', hide=False),
+    'MaterialExpressionConstant'          : UE2BlenderNodeMapping('ShaderNodeValue', hide=False),
     'MaterialExpressionConstant2Vector'   : UE2BlenderNodeMapping('ShaderNodeCombineXYZ', hide=False),
-    'MaterialExpressionConstant3Vector'   : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='RGBA', hide=False, outputs={'RGB':0,'R':1,'G':2,'B':3,'A':4}),
-    'MaterialExpressionConstant4Vector'   : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='RGBA', hide=False), #outputs={'R':1,'G':2,'B':3,'A':4}
-    'MaterialExpressionVectorParameter'   : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='RGBA', hide=False, outputs={'RGB':0,'R':1,'G':2,'B':3,'A':4}),
+    'MaterialExpressionConstant3Vector'   : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='RGBA', hide=False, width=None, outputs={'RGB':0,'R':1,'G':2,'B':3,'A':4},),
+    'MaterialExpressionConstant4Vector'   : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='RGBA', hide=False, width=None), #outputs={'R':1,'G':2,'B':3,'A':4}
+    'MaterialExpressionVectorParameter'   : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='RGBA', hide=False, width=None, outputs={'RGB':0,'R':1,'G':2,'B':3,'A':4}),
     'MaterialExpressionStaticSwitchParameter' : UE2BlenderNodeMapping('ShaderNodeMixRGB', label="Switch", hide=False, inputs={'A':2,'B':1}),
+    'MaterialExpressionIf'                : UE2BlenderNodeMapping('ShaderNodeGroup', subtype="If", hide=False, 
+                                                                  inputs={'A':0,'B':1,'AGreaterThanB':3,'AEqualsB':4,'ALessThanB':5}, defaults={'B':0}, constants={'EqualsThreshold':(2,0.00001)}),
     'MaterialExpressionAppendVector'      : UE2BlenderNodeMapping('ShaderNodeCombineXYZ', label="Append", inputs={'A':0,'B':1}),
     'MaterialExpressionLinearInterpolate' : UE2BlenderNodeMapping('ShaderNodeMixRGB', label="Lerp", inputs={'A':1,'B':2,'Alpha':0}),
-    'MaterialExpressionClamp'             : UE2BlenderNodeMapping('ShaderNodeClamp', inputs={'Input':0,'Min':1,'Max':2}),
-    'MaterialExpressionPower'             : UE2BlenderNodeMapping('ShaderNodeMath', subtype='POWER', inputs={'Base':0,'Exponent':1}),
-    'MaterialExpressionTextureSample'     : UE2BlenderNodeMapping('ShaderNodeTexImage', hide=False, inputs={'Coordinates':0, 'TextureObject':HandleTextureObject}),
-    'MaterialExpressionTextureSampleParameter2D' : UE2BlenderNodeMapping('ShaderNodeTexImage', hide=False, inputs={'Coordinates':0}),
+    'MaterialExpressionTextureSample'     : UE2BlenderNodeMapping('ShaderNodeTexImage', hide=False, width=None, inputs={'Coordinates':0, 'TextureObject':HandleTextureObject}),
+    'MaterialExpressionTextureSampleParameter2D' : UE2BlenderNodeMapping('ShaderNodeTexImage', hide=False, width=None, inputs={'Coordinates':0}),
     'MaterialExpressionTextureObjectParameter'   : UE2BlenderNodeMapping('ShaderNodeValue'),
     'MaterialExpressionTextureCoordinate' : UE2BlenderNodeMapping('ShaderNodeUVMap', hide=False),
     'MaterialExpressionDesaturation'      : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='Desaturation', inputs={'Input':0,'Fraction':1}),
-    'MaterialExpressionComment'           : UE2BlenderNodeMapping('NodeFrame'),
+    'MaterialExpressionComment'           : UE2BlenderNodeMapping('NodeFrame', width=None),
+    'MaterialExpressionReroute'           : UE2BlenderNodeMapping('NodeReroute', hide=False, width=None, inputs={'Input':0}),
     'MaterialExpressionFresnel'           : UE2BlenderNodeMapping('ShaderNodeFresnel', hide=False),
+    'MaterialExpressionBlackBody'         : UE2BlenderNodeMapping('ShaderNodeBlackbody', hide=False, inputs={'Temp':0}),
     'CheapContrast_RGB'                   : UE2BlenderNodeMapping('ShaderNodeBrightContrast', hide=False, inputs={'FunctionInputs':('Color','Contrast')}),
     'BlendAngleCorrectedNormals'          : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='BlendAngleCorrectedNormals', hide=False, inputs={'FunctionInputs':(0,1)}),
-    'MaterialExpressionFunctionInput'     : UE2BlenderNodeMapping('NodeReroute', hide=False),
-    'MaterialExpressionFunctionOutput'    : UE2BlenderNodeMapping('NodeReroute', hide=False),
+    'MaterialExpressionFunctionInput'     : UE2BlenderNodeMapping('NodeReroute', hide=False, width=None),
+    'MaterialExpressionFunctionOutput'    : UE2BlenderNodeMapping('NodeReroute', hide=False, width=None),
 }
 class_blacklist = { 'SceneThumbnailInfoWithPrimitive', 'MetaData', 'MaterialExpressionPanner' }
 material_classes = { 'Material', 'MaterialInstanceConstant' }
@@ -431,7 +449,7 @@ if __name__ != "umat":
 
     #filepath = r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Materials\M_Base_Trim.uasset"
     #filepath = r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Materials\MI_Trim_A_Red2.uasset"
-    #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\NewMaterial.uasset"
-    filepath = r"F:\Projects\Unreal Projects\Assets\Content\Test1434.uasset"
+    filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\NewMaterial.uasset"
+    #filepath = r"F:\Projects\Unreal Projects\Assets\Content\Test1434.uasset"
     ImportNodeGraph(filepath)
     print("Done")
