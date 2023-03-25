@@ -46,7 +46,7 @@ def TryGetExtractedImport(imp:Import, extract_dir):
     return imp.extracted
 
 class UE2BlenderNodeMapping():
-    def __init__(self, bl_idname, subtype=None, label=None, hide=True, inputs=None, constants=None, defaults=None, outputs=None, color=None, width=100):
+    def __init__(self, bl_idname, subtype=None, label=None, hide=True, inputs=None, constants=None, defaults=None, outputs=None, color=None, width=100, visible_outputs=None):
         self.bl_idname = bl_idname
         self.subtype = subtype
         self.label = label
@@ -57,6 +57,7 @@ class UE2BlenderNodeMapping():
         self.outputs = outputs
         self.color = color
         self.width = width
+        self.visible_outputs = visible_outputs
 class NodeData():
     def __init__(self, export, classname=None, node=None, link_indirect=None, input_remap=None):
         self.export = export
@@ -106,6 +107,8 @@ UE2BlenderNode_dict = {
     'MaterialExpressionOneMinus'          : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='SUBTRACT', inputs={'A':0,'Input':1}, defaults={'A':1}, label="1-x"),
     'MaterialExpressionMin'               : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='MINIMUM', inputs={'A':0,'B':1}, defaults={'A':0,'B':1}),
     'MaterialExpressionMax'               : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='MAXIMUM', inputs={'A':0,'B':1}, defaults={'A':0,'B':1}),
+    'MaterialExpressionStep'              : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='Step', inputs={'Y':0,'X':1}, defaults={'Y':0,'X':1}),
+    'MaterialExpressionSmoothStep'        : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='SmoothStep', inputs={'Min':0,'Max':1,'Value':2}, defaults={'Min':0,'Max':1,'Value':0}, width=120),
     'MaterialExpressionClamp'             : UE2BlenderNodeMapping('ShaderNodeClamp', inputs={'Input':0,'Min':1,'Max':2}),
 
     'MaterialExpressionDistance'          : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='DISTANCE', inputs={'A':0,'B':1}),
@@ -138,6 +141,14 @@ UE2BlenderNode_dict = {
     'MaterialExpressionTextureSampleParameter2D' : UE2BlenderNodeMapping('ShaderNodeTexImage', hide=False, width=None, inputs={'Coordinates':0}),
     'MaterialExpressionTextureObjectParameter'   : UE2BlenderNodeMapping('ShaderNodeValue'),
     'MaterialExpressionTextureCoordinate' : UE2BlenderNodeMapping('ShaderNodeUVMap', hide=False),
+    'MaterialExpressionTwoSidedSign'      : UE2BlenderNodeMapping('ShaderNodeGroup', subtype="TwoSidedSign", hide=False, width=140),
+    'MaterialExpressionVertexColor'       : UE2BlenderNodeMapping('ShaderNodeVertexColor', hide=False, label="Vertex Color"),
+    'MaterialExpressionVertexNormalWS'    : UE2BlenderNodeMapping('ShaderNodeNewGeometry', hide=False, label="Vertex Normal", visible_outputs=('Normal',), outputs={'Normal':'Normal'}),
+    'MaterialExpressionWorldPosition'     : UE2BlenderNodeMapping('ShaderNodeNewGeometry', hide=False, width=170, label="Absolute World Position", visible_outputs=('Position',)),
+    'MaterialExpressionObjectPositionWS'  : UE2BlenderNodeMapping('ShaderNodeObjectInfo', hide=False, width=None, label="Object Position", visible_outputs=('Location',)),
+    'MaterialExpressionCameraPositionWS'  : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='CameraPosition', hide=False, width=None),
+    'MaterialExpressionScreenPosition'    : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='ScreenPosition', hide=False, width=None),
+
     'MaterialExpressionDesaturation'      : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='Desaturation', inputs={'Input':0,'Fraction':1}),
     'MaterialExpressionComment'           : UE2BlenderNodeMapping('NodeFrame', width=None),
     'MaterialExpressionReroute'           : UE2BlenderNodeMapping('NodeReroute', hide=False, width=None, inputs={'Input':0}),
@@ -156,7 +167,7 @@ def DeDuplicateName(name):
     i = name.rfind('.')
     return name[:i] if i >= 0 else name
 def GuessBaseDir(filename): return filename[:filename.find("Game")] # Unreal defaults to starting path with "Game" on asset export
-def SetupNode(node_tree, name, mapping, node_data) -> bpy.types.ShaderNode: # TODO: inline
+def SetupNode(node_tree, name, mapping:UE2BlenderNodeMapping, node_data) -> bpy.types.ShaderNode: # TODO: inline
     node = node_tree.nodes.new(mapping.bl_idname)
     node.name = name
     node.hide = mapping.hide
@@ -167,9 +178,12 @@ def SetupNode(node_tree, name, mapping, node_data) -> bpy.types.ShaderNode: # TO
     if mapping.label: node.label = mapping.label
     node.use_custom_color = mapping.color != None
     if mapping.color: node.color = mapping.color
+    if mapping.visible_outputs:
+        for out_socket in node.outputs:
+            if out_socket.name not in mapping.visible_outputs: out_socket.hide = True
 
     match mapping.bl_idname:
-        case 'ShaderNodeTexImage':
+        case 'ShaderNodeTexImage' | 'ShaderNodeVertexColor':
             rgb_in = node.outputs['Color']
             if node_data.export.properties.TryGetValue('SamplerType') == 'SAMPLERTYPE_Normal':
                 rgb2n = node_tree.nodes.new('ShaderNodeGroup')
@@ -179,10 +193,11 @@ def SetupNode(node_tree, name, mapping, node_data) -> bpy.types.ShaderNode: # TO
                 rgb2n.location += Vector((0,30))
                 node_tree.links.new(node.outputs['Color'], rgb2n.inputs['RGB'])
                 rgb_in = rgb2n.outputs['Normal']
+            if mapping.bl_idname == 'ShaderNodeVertexColor': print("TODO: Pick Vertex Color Attribute")
 
-            rgba = node_tree.nodes.new('ShaderNodeGroup')
+            rgba:bpy.types.ShaderNode = node_tree.nodes.new('ShaderNodeGroup')
             rgba.node_tree = bpy.data.node_groups['RGBA']
-            rgba.hide = True # TODO: set position here
+            rgba.hide, rgba.width,rgba.show_options  = (True, 100, False)
             rgba.location = node.location + Vector((120,-32))
             node_tree.links.new(rgb_in, rgba.inputs['RGB'])
             node_tree.links.new(node.outputs['Alpha'], rgba.inputs['A'])
@@ -292,8 +307,12 @@ def LinkSocket(node_tree, nodes_data:dict[str,NodeData], node_data:NodeData, exp
         
         node, link_node = (node_data.node, link_node_data.node)
         outputs = link_node_data.link_indirect if link_node_data.link_indirect else link_node.outputs
-        src_socket = outputs[expr.value.node_output_i if expr.struct_type == 'ExpressionInput' else 0]
-        dst_socket = None
+
+        src_i = expr.value.node_output_i if expr.struct_type == 'ExpressionInput' else 0
+        src_socket = outputs[src_i]
+        while src_socket.hide: # TODO: this is awful
+            src_i += 1
+            src_socket = outputs[src_i]
 
         if link_node_type == 'MaterialExpressionAppendVector' and node.bl_idname == 'ShaderNodeCombineXYZ': raise Exception("Unreal's append is annoying")
         dst_socket = node.inputs[dst_index]
@@ -454,7 +473,7 @@ if __name__ != "umat":
 
     #filepath = r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Materials\M_Base_Trim.uasset"
     #filepath = r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Materials\MI_Trim_A_Red2.uasset"
-    filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\NewMaterial.uasset"
-    #filepath = r"F:\Projects\Unreal Projects\Assets\Content\Test1434.uasset"
+    #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\NewMaterial.uasset"
+    filepath = r"F:\Projects\Unreal Projects\Assets\Content\Test1434.uasset"
     ImportNodeGraph(filepath)
     print("Done")
