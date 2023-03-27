@@ -157,8 +157,9 @@ UE2BlenderNode_dict = {
     'CheapContrast_RGB'                   : UE2BlenderNodeMapping('ShaderNodeBrightContrast', hide=False, inputs={'FunctionInputs':('Color','Contrast')}),
     'BlendAngleCorrectedNormals'          : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='BlendAngleCorrectedNormals', hide=False, inputs={'FunctionInputs':(0,1)}),
     'MaterialExpressionFunctionInput'     : UE2BlenderNodeMapping('NodeReroute', hide=False, width=None),
-    'MaterialExpressionFunctionOutput'    : UE2BlenderNodeMapping('NodeReroute', hide=False, width=None),
+    'MaterialExpressionFunctionOutput'    : UE2BlenderNodeMapping('NodeReroute', hide=False, width=None, inputs={'A':0}),
 }
+ue_to_bl_type = { 'FunctionInput_Scalar':'NodeSocketFloat', 'FunctionInput_StaticBool':'NodeSocketFloat' }
 class_blacklist = { 'SceneThumbnailInfoWithPrimitive', 'MetaData', 'MaterialExpressionPanner' }
 material_classes = { 'Material', 'MaterialInstanceConstant' }
 node_whitelist = { 'ShaderNodeBsdfPrincipled', 'ShaderNodeOutputMaterial' }
@@ -229,7 +230,13 @@ def CreateNode(exp:Export, node_tree, nodes_data:dict[str,NodeData], graph_data,
         classname = matfnc_imp.object_name
         if classname not in UE2BlenderNode_dict:
             matfnc_subtype = ImportMaterialFunction(matfnc_imp)
-            UE2BlenderNode_dict[classname] = UE2BlenderNodeMapping('ShaderNodeGroup', matfnc_subtype, hide=False)
+            input_count = len(bpy.data.node_groups[matfnc_subtype].inputs)
+            if input_count > 0:
+                inputs = []
+                for i in range(input_count): inputs.append(i)
+                inputs = { 'FunctionInputs':tuple(inputs) }
+            else: inputs = None
+            UE2BlenderNode_dict[classname] = UE2BlenderNodeMapping('ShaderNodeGroup', matfnc_subtype, hide=False, inputs=inputs)
     node_data.classname = classname
 
     mapping = UE2BlenderNode_dict.get(classname)
@@ -450,11 +457,37 @@ def ImportNodeGraph(filepath, uproject=None, name=None, mesh=None, log=False): #
                     out = node_tree = bpy.data.node_groups.new(exp.object_name, 'ShaderNodeTree')
                     graph_data = GraphData() # TODO: replace with attributes on export?
                     nodes_data = graph_data.nodes_data
-                    
-                    for exr_exp in params.TryGetValue('FunctionExpressions', ()): CreateNode(exr_exp.value, node_tree, nodes_data, graph_data, None)
 
-                    for name in nodes_data: LinkSockets(node_tree, nodes_data, nodes_data[name]) # TODO: this iterates nodes without links!
-                    #LinkSockets(node_tree, nodes_data, node_data)
+                    in_node = node_tree.nodes.new('NodeGroupInput')
+                    out_node = node_tree.nodes.new('NodeGroupOutput')
+
+                    input_positions = []
+                    output_positions = []
+                    
+                    for exr_exp in params.TryGetValue('FunctionExpressions', ()):
+                        node_data = CreateNode(exr_exp.value, node_tree, nodes_data, graph_data, None)
+                        if node_data:
+                            props = node_data.export.properties
+                            match node_data.classname:
+                                case 'MaterialExpressionFunctionInput':
+                                    input_positions.append(node_data.node.location)
+                                    node_tree.inputs.new(ue_to_bl_type.get(props.TryGetValue('InputType', 'FunctionInput_Vector3'), 'NodeSocketVector'), props.TryGetValue('InputName', "In"))
+                                    node_tree.links.new(in_node.outputs[len(node_tree.inputs)-1], node_data.node.inputs[0])
+                                case 'MaterialExpressionFunctionOutput':
+                                    output_positions.append(node_data.node.location)
+                                    node_tree.outputs.new('NodeSocketVector', props.TryGetValue('OutputName', "Result"))
+                                    node_tree.links.new(node_data.node.outputs[0], out_node.inputs[len(node_tree.outputs)-1])
+                    
+                    in_pos = Vector((0,0))
+                    for pos in input_positions: in_pos += pos
+                    in_node.location = in_pos / len(input_positions) + Vector((-300,50))
+
+                    out_pos = Vector((0,0))
+                    for pos in output_positions: out_pos += pos
+                    out_node.location = out_pos / len(output_positions) + Vector((200,50))
+
+                    for name in nodes_data:
+                        LinkSockets(node_tree, nodes_data, nodes_data[name]) # TODO: this iterates nodes without links!
     
     if log: print(f"Imported {mat.name}: {(time.time() - t0) * 1000:.2f}ms")
     return (out, graph_data)
