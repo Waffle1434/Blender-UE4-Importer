@@ -101,6 +101,7 @@ class FColor(PrintableStruct): _fields_ = ( ('b', c_ubyte), ('g', c_ubyte), ('r'
 class FLinearColor(PrintableStruct):
     _fields_ = ( ('r', c_float), ('g', c_float), ('b', c_float), ('a', c_float) )
     def ToTuple(self): return (self.r, self.g, self.b, self.a)
+    def ToTupleRGB(self): return (self.r, self.g, self.b, 1)
 class FBox(PrintableStruct): _fields_ = ( ('min', FVector), ('max', FVector), ('valid', c_ubyte) )
 class FBoxSphereBounds(PrintableStruct): _fields_ = ( ('origin', FVector), ('box_extent', FVector), ('sphere_radius', c_float) )
 class FMeshSectionInfo(PrintableStruct): _fields_ = ( ('material_index', c_int), ('collision', c_bool), ('shadow', c_bool) )

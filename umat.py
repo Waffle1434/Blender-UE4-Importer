@@ -129,7 +129,7 @@ UE2BlenderNode_dict = {
     'MaterialExpressionScalarParameter'   : UE2BlenderNodeMapping('ShaderNodeValue', hide=False),
     'MaterialExpressionConstant'          : UE2BlenderNodeMapping('ShaderNodeValue', hide=False),
     'MaterialExpressionConstant2Vector'   : UE2BlenderNodeMapping('ShaderNodeCombineXYZ', hide=False),
-    'MaterialExpressionConstant3Vector'   : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='RGBA', hide=False, width=None, outputs={'RGB':0,'R':1,'G':2,'B':3,'A':4},),
+    'MaterialExpressionConstant3Vector'   : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='Const3', hide=False, width=None),
     'MaterialExpressionConstant4Vector'   : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='RGBA', hide=False, width=None), #outputs={'R':1,'G':2,'B':3,'A':4}
     'MaterialExpressionVectorParameter'   : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='RGBA', hide=False, width=None, outputs={'RGB':0,'R':1,'G':2,'B':3,'A':4}),
     'MaterialExpressionStaticSwitchParameter' : UE2BlenderNodeMapping('ShaderNodeMixRGB', label="Switch", hide=False, inputs={'A':2,'B':1}),
@@ -262,7 +262,9 @@ def CreateNode(exp:Export, node_tree, nodes_data:dict[str,NodeData], graph_data,
         match classname:
             case 'MaterialExpressionScalarParameter':
                 node.outputs[0].default_value = value
-            case 'MaterialExpressionVectorParameter' | 'MaterialExpressionConstant3Vector':
+            case 'MaterialExpressionConstant3Vector':
+                node.inputs[0].default_value = value.ToTupleRGB()
+            case 'MaterialExpressionVectorParameter':
                 node.inputs['RGB'].default_value = value.ToTuple()
                 node.inputs['A'].default_value = value.a
             case 'MaterialExpressionStaticSwitchParameter':
@@ -310,7 +312,7 @@ def LinkSocket(node_tree, nodes_data:dict[str,NodeData], node_data:NodeData, exp
 
         src_i = expr.value.node_output_i if expr.struct_type == 'ExpressionInput' else 0
         src_socket = outputs[src_i]
-        while src_socket.hide: # TODO: this is awful
+        while src_socket.hide or src_socket.is_unavailable: # TODO: this is awful
             src_i += 1
             src_socket = outputs[src_i]
 
@@ -473,7 +475,7 @@ if __name__ != "umat":
 
     #filepath = r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Materials\M_Base_Trim.uasset"
     #filepath = r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Materials\MI_Trim_A_Red2.uasset"
-    #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\NewMaterial.uasset"
-    filepath = r"F:\Projects\Unreal Projects\Assets\Content\Test1434.uasset"
+    filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\NewMaterial.uasset"
+    #filepath = r"F:\Projects\Unreal Projects\Assets\Content\Test1434.uasset"
     ImportNodeGraph(filepath)
     print("Done")
