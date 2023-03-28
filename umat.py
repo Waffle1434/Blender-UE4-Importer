@@ -140,7 +140,7 @@ UE2BlenderNode_dict = {
     'MaterialExpressionTextureSample'     : UE2BlenderNodeMapping('ShaderNodeTexImage', hide=False, width=None, inputs={'Coordinates':0, 'TextureObject':HandleTextureObject}),
     'MaterialExpressionTextureSampleParameter2D' : UE2BlenderNodeMapping('ShaderNodeTexImage', hide=False, width=None, inputs={'Coordinates':0}),
     'MaterialExpressionTextureObjectParameter'   : UE2BlenderNodeMapping('ShaderNodeValue'),
-    'MaterialExpressionTextureCoordinate' : UE2BlenderNodeMapping('ShaderNodeUVMap', hide=False),
+    'MaterialExpressionTextureCoordinate' : UE2BlenderNodeMapping('ShaderNodeUVMap', hide=False, width=None),
     'MaterialExpressionTwoSidedSign'      : UE2BlenderNodeMapping('ShaderNodeGroup', subtype="TwoSidedSign", hide=False, width=140),
     'MaterialExpressionVertexColor'       : UE2BlenderNodeMapping('ShaderNodeVertexColor', hide=False, label="Vertex Color"),
     'MaterialExpressionVertexNormalWS'    : UE2BlenderNodeMapping('ShaderNodeNewGeometry', hide=False, label="Vertex Normal", visible_outputs=('Normal',), outputs={'Normal':'Normal'}),
@@ -154,8 +154,8 @@ UE2BlenderNode_dict = {
     'MaterialExpressionReroute'           : UE2BlenderNodeMapping('NodeReroute', hide=False, width=None, inputs={'Input':0}),
     'MaterialExpressionFresnel'           : UE2BlenderNodeMapping('ShaderNodeFresnel', hide=False),
     'MaterialExpressionBlackBody'         : UE2BlenderNodeMapping('ShaderNodeBlackbody', hide=False, inputs={'Temp':0}),
-    'CheapContrast_RGB'                   : UE2BlenderNodeMapping('ShaderNodeBrightContrast', hide=False, inputs={'FunctionInputs':('Color','Contrast')}),
-    'BlendAngleCorrectedNormals'          : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='BlendAngleCorrectedNormals', hide=False, inputs={'FunctionInputs':(0,1)}),
+    'CheapContrast_RGB'                   : UE2BlenderNodeMapping('ShaderNodeBrightContrast', width=None, hide=False, inputs={'FunctionInputs':('Color','Contrast')}),
+    'BlendAngleCorrectedNormals'          : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='BlendAngleCorrectedNormals', width=None, hide=False, inputs={'FunctionInputs':(0,1)}),
     'MaterialExpressionFunctionInput'     : UE2BlenderNodeMapping('NodeReroute', hide=False, width=None),
     'MaterialExpressionFunctionOutput'    : UE2BlenderNodeMapping('NodeReroute', hide=False, width=None, inputs={'A':0}),
 }
@@ -199,7 +199,7 @@ def SetupNode(node_tree, name, mapping:UE2BlenderNodeMapping, node_data) -> bpy.
             rgba:bpy.types.ShaderNode = node_tree.nodes.new('ShaderNodeGroup')
             rgba.node_tree = bpy.data.node_groups['RGBA']
             rgba.hide, rgba.width,rgba.show_options  = (True, 100, False)
-            rgba.location = node.location + Vector((120,-32))
+            rgba.location = node.location + Vector((160,-32))
             node_tree.links.new(rgb_in, rgba.inputs['RGB'])
             node_tree.links.new(node.outputs['Alpha'], rgba.inputs['A'])
             node_data.link_indirect = rgba.outputs
@@ -252,7 +252,9 @@ def CreateNode(exp:Export, node_tree, nodes_data:dict[str,NodeData], graph_data,
     if sy != None: node.height = sy
     txt, param_name = (params.TryGetValue('Text'), params.TryGetValue('ParameterName'))
     if txt: node.label = txt
-    elif param_name: node.label = param_name
+    elif param_name:
+        node.label = param_name
+        node.width = max(node.width, 25 + 7*len(param_name))
 
     HandleDefaults(mapping, node, params)
     if mapping.constants:
