@@ -1,10 +1,12 @@
 import os, io, sys, math, uuid, bpy, bmesh, importlib, time
 from ctypes import *
 from mathutils import Vector
+from bpy.props import *
+from bpy_extras.io_utils import ImportHelper
 
 cur_dir = os.path.dirname(__file__)
 if cur_dir not in sys.path: sys.path.append(cur_dir)
-import uasset, umat
+import uasset, umat, register_helper
 from uasset import UAsset, Export, FStripDataFlags, FVector, FVector2D, FColor, Euler
 from umat import TryGetUMaterialImport
 
@@ -161,21 +163,50 @@ def ImportStaticMeshUAsset(filepath:str, import_materials=True, log=False):
             case 'StaticMesh': return ImportStaticMesh(export, import_materials, log)
     if log: print(f"\"{filepath}\" Static Mesh Export Not Found")
     return None
+def ImportUMeshAsObject(filepath:str, materials:bool):
+    mesh = ImportStaticMeshUAsset(filepath, materials, True)
+    bpy.context.collection.objects.link(bpy.data.objects.new(mesh.name, mesh))
+
+class ImportUMesh(bpy.types.Operator, ImportHelper):
+    """Import Unreal Engine Static Mesh File"""
+    bl_idname    = "import.umesh"
+    bl_label     = "Import"
+    filename_ext = ".uasset"
+    filter_glob: StringProperty(default="*.uasset", options={'HIDDEN'}, maxlen=255)
+    files:       CollectionProperty(type=bpy.types.OperatorFileListElement, options={'HIDDEN','SKIP_SAVE'})
+    directory:   StringProperty(options={'HIDDEN'})
+
+    materials:   BoolProperty(name="Materials", default=True, description="Import Mesh Materials (this is usually the slowest part).")
+
+    def execute(self, context):
+        for file in self.files:
+            if file.name != "": ImportUMeshAsObject(self.directory + file.name, self.materials)
+        return {'FINISHED'}
+
+reg_classes = ( ImportUMesh, )
+
+def register():
+    register_helper.RegisterClasses(reg_classes)
+    register_helper.RegisterOperatorItem(bpy.types.TOPBAR_MT_file_import, ImportUMesh, "Unreal Engine Static Mesh (.uasset)")
+def unregister():
+    register_helper.TryUnregisterClasses(reg_classes)
+    register_helper.RemoveOperatorItem(bpy.types.TOPBAR_MT_file_import, ImportUMesh)
 
 if __name__ != "umesh":
     importlib.reload(uasset)
     importlib.reload(umat)
+    unregister()
+    register()
 
     #filepath = r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Meshes\SM_Door_Small_A.uasset"
-    #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\ModSci_Engineer\Meshes\SM_Door_Small_A.uasset"
     #filepath = r"F:\Projects\Unreal Projects\Assets\Content\VehicleVarietyPack\Meshes\SM_Truck_Box.uasset"
-    filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\VehicleVarietyPack\Meshes\SM_Truck_Box.uasset"
     #filepath = r"F:\Projects\Unreal Projects\Assets\Content\VehicleVarietyPack\Meshes\SM_Hatchback.uasset"
     #filepath = r"F:\Projects\Unreal Projects\Assets\Content\VehicleVarietyPack\Meshes\SM_Pickup.uasset"
     #filepath = r"F:\Projects\Unreal Projects\Assets\Content\VehicleVarietyPack\Meshes\SM_SUV.uasset"
     #filepath = r"F:\Projects\Unreal Projects\Assets\Content\VehicleVarietyPack\Meshes\SM_SportsCar.uasset"
+    #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\ModSci_Engineer\Meshes\SM_Door_Small_A.uasset"
+    filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\VehicleVarietyPack\Meshes\SM_Truck_Box.uasset"
 
-    mesh = ImportStaticMeshUAsset(filepath, True, True)
-    bpy.context.collection.objects.link(bpy.data.objects.new(mesh.name, mesh))
+    ImportUMeshAsObject(filepath, True)
 
     print("Done")

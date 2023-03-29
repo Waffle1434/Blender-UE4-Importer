@@ -2,10 +2,12 @@ from __future__ import annotations
 import bpy, sys, time, os, pathlib, subprocess, importlib
 from struct import *
 from mathutils import *
+from bpy.props import *
+from bpy_extras.io_utils import ImportHelper
 
 cur_dir = os.path.dirname(__file__)
 if cur_dir not in sys.path: sys.path.append(cur_dir)
-import uasset
+import uasset, register_helper
 from uasset import UAsset, Import, Export, Properties
 
 umodel_path = cur_dir + r"\umodel.exe"
@@ -217,7 +219,7 @@ def HandleConstant(node, params, name, i, default):
         if value != None:
             socket = node.inputs[i]
             socket.default_value = (value, value, value) if socket.type == 'VECTOR' else value
-def CreateNode(exp:Export, node_tree, nodes_data:dict[str,NodeData], graph_data, mesh):
+def CreateNode(exp:Export, node_tree, nodes_data:dict[str,NodeData], graph_data, mesh=None):
     name = exp.object_name
     classname = exp.export_class_type # TODO: inline?
     nodes_data[name] = node_data = NodeData(exp)
@@ -293,11 +295,12 @@ def CreateNode(exp:Export, node_tree, nodes_data:dict[str,NodeData], graph_data,
         case 'MaterialExpressionTextureCoordinate':
             uv_i = params.TryGetValue('CoordinateIndex')
             if uv_i != None:
-                if mesh == None: mesh = bpy.context.object.data # TODO: less fragile?
-                try: node.uv_map = mesh.uv_layers.keys()[uv_i]
-                except:
-                    print(f"Failed to use UV{uv_i} from mesh")
-                    pass
+                if mesh == None: node.uv_map = f"UV{uv_i}"
+                else:
+                    try: node.uv_map = mesh.uv_layers.keys()[uv_i]
+                    except:
+                        print(f"Failed to use UV{uv_i} from mesh")
+                        pass
         case 'MaterialExpressionTextureSampleParameter2D' | 'MaterialExpressionTextureSample':
             tex_imp = params.TryGetValue('Texture')
             if tex_imp:
@@ -352,9 +355,9 @@ def SetNodeTexture(node, image):
         linked_node = links[0].to_node
         if linked_node.node_tree.name.startswith('RGBtoNormal'):
             linked_node.node_tree = bpy.data.node_groups['RGBtoNormal' if image.get('flip_y', False) else 'RGBtoNormalY-']
-def ImportMaterialFunction(mat_fnc_imp:Import):
+def ImportMaterialFunction(mat_fnc_imp:Import, mesh=None):
     node_graph_name = mat_fnc_imp.object_name
-    if node_graph_name not in bpy.data.node_groups: ImportNodeGraph(mat_fnc_imp.asset.ToProjectPath(mat_fnc_imp.import_ref.object_name), mat_fnc_imp.asset.uproject)
+    if node_graph_name not in bpy.data.node_groups: ImportNodeGraph(mat_fnc_imp.asset.ToProjectPath(mat_fnc_imp.import_ref.object_name), mat_fnc_imp.asset.uproject, mesh=mesh)
     return node_graph_name
 def ImportNodeGraph(filepath, uproject=None, name=None, mesh=None, log=False): # TODO: return asset?
     t0 = time.time()
@@ -493,7 +496,7 @@ def ImportNodeGraph(filepath, uproject=None, name=None, mesh=None, log=False): #
     
     if log: print(f"Imported {mat.name}: {(time.time() - t0) * 1000:.2f}ms")
     return (out, graph_data)
-def TryGetUMaterialImport(mat_imp:Import, mesh):
+def TryGetUMaterialImport(mat_imp:Import, mesh=None):
     mat = bpy.data.materials.get(mat_imp.object_name)
     if not mat:
         umat_path = mat_imp.asset.ToProjectPath(mat_imp.import_ref.object_name)
@@ -503,8 +506,35 @@ def TryGetUMaterialImport(mat_imp:Import, mesh):
             pass
     return mat
 
+def menu_import_umat(self, context): self.layout.operator(ImportUMat.bl_idname, text="Unreal Engine Material (.uasset)")
+class ImportUMat(bpy.types.Operator, ImportHelper):
+    """Import Unreal Engine Material File"""
+    bl_idname    = "import.umat"
+    bl_label     = "Import"
+    filename_ext = ".uasset"
+    filter_glob: StringProperty(default="*.uasset", options={'HIDDEN'}, maxlen=255)
+    files:       CollectionProperty(type=bpy.types.OperatorFileListElement, options={'HIDDEN','SKIP_SAVE'})
+    directory:   StringProperty(options={'HIDDEN'})
+
+    def execute(self, context):
+        for file in self.files:
+            if file.name != "": ImportNodeGraph(self.directory + file.name)
+        return {'FINISHED'}
+
+reg_classes = ( ImportUMat, )
+
+def register():
+    register_helper.RegisterClasses(reg_classes)
+    register_helper.RegisterOperatorItem(bpy.types.TOPBAR_MT_file_import, ImportUMat, "Unreal Engine Material (.uasset)")
+def unregister():
+    register_helper.TryUnregisterClasses(reg_classes)
+    register_helper.RemoveOperatorItem(bpy.types.TOPBAR_MT_file_import, ImportUMat)
+
 if __name__ != "umat":
     importlib.reload(uasset)
+    unregister()
+    register()
+
     for mat in bpy.data.materials: bpy.data.materials.remove(mat)
     for group in bpy.data.node_groups: bpy.data.node_groups.remove(group)
 

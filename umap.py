@@ -6,7 +6,7 @@ from bpy_extras.io_utils import ImportHelper
 cur_dir = os.path.dirname(__file__)
 if cur_dir not in sys.path: sys.path.append(cur_dir)
 
-import uasset, umat, umesh
+import uasset, umat, umesh, register_helper
 from uasset import UAsset, Import, Export, Vector, Euler, FColor
 from umat import TryGetUMaterialImport
 from umesh import ImportStaticMeshUAsset
@@ -193,7 +193,6 @@ def LoadUMap(filepath, import_meshes=True, import_materials=True, import_lights_
     print(f"{len(bpy.data.objects) - obj_count} Objects, {len(bpy.data.meshes) - mesh_count} Meshes, {len(bpy.data.materials) - mat_count} Materials, {len(bpy.data.lights) - light_count} Lights")
     if len(bpy.data.lights) > 128: print(f"Warning, Exceeded Eevee's 128 Light Limit! ({len(bpy.data.lights)})")
 
-def menu_import_umap(self, context): self.layout.operator(ImportUMap.bl_idname, text="Unreal Engine Map (.umap)")
 class ImportUMap(bpy.types.Operator, ImportHelper):
     """Import Unreal Engine umap File"""
     bl_idname    = "import.umap"
@@ -214,45 +213,31 @@ class ImportUMap(bpy.types.Operator, ImportHelper):
 
     def execute(self, context):
         for file in self.files:
-            if file.name != "": LoadUMap(self.directory + file.name, self.meshes, self.materials, self.lights_point, self.lights_spot, self.cubemaps, 
-                                         self.force_shadows, self.light_intensity, self.light_angle_coef)
+            if file.name != "": LoadUMap(self.directory + file.name, self.meshes, self.materials, self.lights_point, self.lights_spot, 
+                                         self.cubemaps, self.force_shadows, self.light_intensity, self.light_angle_coef)
         return {'FINISHED'}
 
 reg_classes = ( ImportUMap, )
-persist_vars = bpy.app.driver_namespace
 
-def registerDrawEvent(event, item):
-    id = event.bl_rna.name
-    handles = persist_vars.get(id, [])
-    event.append(item)
-    handles.append(item)
-    persist_vars[id] = handles
-def removeDrawEvents(event):
-    for item in persist_vars.get(event.bl_rna.name,[]):
-        try: event.remove(item)
-        except: pass
 def register():
-    for cls in reg_classes: bpy.utils.register_class(cls)
-    registerDrawEvent(bpy.types.TOPBAR_MT_file_import, menu_import_umap)
+    register_helper.RegisterClasses(reg_classes)
+    register_helper.RegisterOperatorItem(bpy.types.TOPBAR_MT_file_import, ImportUMap, "Unreal Engine Map (.umap)")
 def unregister():
-    for cls in reg_classes:
-        try: bpy.utils.unregister_class(cls)
-        except: pass
-    removeDrawEvents(bpy.types.TOPBAR_MT_file_import)
-
-try: unregister()
-except: pass
-register()
+    register_helper.TryUnregisterClasses(reg_classes)
+    register_helper.RemoveOperatorItem(bpy.types.TOPBAR_MT_file_import, ImportUMap)
 
 if __name__ != "umap":
     importlib.reload(uasset)
     importlib.reload(umat)
     importlib.reload(umesh)
+    unregister()
+    register()
+
     #sys.settrace(None) # Disable debugging for faster runtime
 
     #LoadUMap(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary.umap", True, True)
-    #LoadUMap(r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary.umap", True, True)
-    LoadUMap(r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary_427.umap", True, True)
     #LoadUMap(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Overview.umap", True, True)
     #LoadUMap(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary_2.umap", True, True)
+    #LoadUMap(r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary.umap", True, True)
+    #LoadUMap(r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary_427.umap", True, True)
     print("Done")
