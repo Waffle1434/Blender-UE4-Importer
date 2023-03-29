@@ -64,7 +64,7 @@ def TryGetStaticMesh(static_mesh_comp:Export, import_materials=True):
                     mesh.name = override_mesh_name
                     for i in range(len(mat_overrides)):
                         mat_override = mat_overrides[i].value
-                        if mat_override: mesh.materials[i] = TryGetUMaterialImport(mat_override, mat_mesh=mesh)
+                        if mat_override: mesh.materials[i] = TryGetUMaterialImport(mat_override, mesh)
     return mesh
 def ProcessUMapExport(export:Export, import_meshes=True, import_materials=True, import_lights_point=True, import_lights_spot=True, import_cubemaps=True, 
                       force_shadows=False, light_intensity=1, light_angle_coef=1):
@@ -251,7 +251,8 @@ if __name__ != "umap":
     #sys.settrace(None) # Disable debugging for faster runtime
 
     #LoadUMap(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary.umap", True, True)
-    #LoadUMap(r"C:\Users\jdeacutis\Desktop\fSpy\New folder\Blender-UE4-Importer\Samples\Example_Stationary.umap", True, True)
+    #LoadUMap(r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary.umap", True, True)
+    LoadUMap(r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary_427.umap", True, True)
     #LoadUMap(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Overview.umap", True, True)
-    LoadUMap(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary_2.umap", True, True)
+    #LoadUMap(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary_2.umap", True, True)
     print("Done")
