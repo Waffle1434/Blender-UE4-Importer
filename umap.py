@@ -45,11 +45,11 @@ def TryGetStaticMesh(static_mesh_comp:Export, import_materials=True):
     if static_mesh:
         mesh_name = static_mesh.object_name
         mesh = bpy.data.meshes.get(mesh_name)
-        if not mesh:
+        if not mesh or not mesh.get('UAsset'):
             mesh_import = static_mesh.import_ref
             if mesh_import:
                 mesh_path = static_mesh_comp.asset.ToProjectPath(mesh_import.object_name)
-                mesh = ImportStaticMeshUAsset(mesh_path, import_materials)
+                mesh = ImportStaticMeshUAsset(mesh_path, static_mesh_comp.asset.uproject, import_materials)
                 if not mesh: print(f"Failed to get Static Mesh \"{mesh_path}\"")
         if import_materials:
             mat_overrides:list[Import] = static_mesh_comp.properties.TryGetValue('OverrideMaterials')
@@ -132,13 +132,13 @@ def ProcessUMapExport(export:Export, import_meshes=True, import_materials=True, 
             obj = SetupObject(bpy.context, export.object_name, probe)
             TryApplyRootComponent(export, obj, scale=0.01)
         case _:
-            if export.export_class.class_name == 'BlueprintGeneratedClass':
+            if export.export_class_type == 'BlueprintGeneratedClass':
                 export.ReadProperties(True, False)
 
                 bp_obj = SetupObject(bpy.context, export.object_name)
                 TryApplyRootComponent(export, bp_obj)
                 root_comp = export.properties.TryGetValue('RootComponent')
-                root_comp.bl_obj = bp_obj
+                if root_comp: root_comp.bl_obj = bp_obj
 
                 bp_comps = export.properties.TryGetValue('BlueprintCreatedComponents')
                 if bp_comps:
@@ -193,6 +193,7 @@ def LoadUMap(filepath, import_meshes=True, import_materials=True, import_lights_
     print(f"{len(bpy.data.objects) - obj_count} Objects, {len(bpy.data.meshes) - mesh_count} Meshes, {len(bpy.data.materials) - mat_count} Materials, {len(bpy.data.lights) - light_count} Lights")
     if len(bpy.data.lights) > 128: print(f"Warning, Exceeded Eevee's 128 Light Limit! ({len(bpy.data.lights)})")
 
+def menu_import_umap(self, context): self.layout.operator(ImportUMap.bl_idname, text="UE Map (.umap)")
 class ImportUMap(bpy.types.Operator, ImportHelper):
     """Import Unreal Engine umap File"""
     bl_idname    = "import.umap"
@@ -221,10 +222,10 @@ reg_classes = ( ImportUMap, )
 
 def register():
     register_helper.RegisterClasses(reg_classes)
-    register_helper.RegisterOperatorItem(bpy.types.TOPBAR_MT_file_import, ImportUMap, "Unreal Engine Map (.umap)")
+    register_helper.RegisterDrawFnc(bpy.types.TOPBAR_MT_file_import, ImportUMap, menu_import_umap)
 def unregister():
     register_helper.TryUnregisterClasses(reg_classes)
-    register_helper.RemoveOperatorItem(bpy.types.TOPBAR_MT_file_import, ImportUMap)
+    register_helper.UnregisterDrawFnc(bpy.types.TOPBAR_MT_file_import, ImportUMap, menu_import_umap)
 
 if __name__ != "umap":
     importlib.reload(uasset)

@@ -439,6 +439,7 @@ class UProject:
         if uproject_file:
             with open(uproject_file, 'r') as file: engine_version = json.load(file)['EngineAssociation']
             self.engine_dir = winreg.QueryValueEx(winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, rf"SOFTWARE\EpicGames\Unreal Engine\{engine_version}"), "InstalledDirectory")[0] + "\\Engine\\"
+        else: self.engine_dir = self.dir
 class UAsset:
     def __init__(self, filepath:str, read_all=False, uproject=None):
         self.filepath = filepath

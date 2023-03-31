@@ -10,6 +10,8 @@ import uasset, umat, register_helper
 from uasset import UAsset, Export, FStripDataFlags, FVector, FVector2D, FColor, Euler
 from umat import TryGetUMaterialImport
 
+v_obj_guid = uuid.UUID('E4B068ED-42E9-F494-0BDA-31A241BB462E')
+
 def ReadMeshBulkData(self:Export, asset:UAsset, f:uasset.ByteStream): # FByteBulkData
     flags = f.ReadUInt32()
     assert not (flags & 0x2) # BULKDATA_Size64Bit
@@ -50,7 +52,7 @@ def ReadMeshBulkData(self:Export, asset:UAsset, f:uasset.ByteStream): # FByteBul
             if len(wedge_uvs[i_uv]) > 0: uvs.append(mdl_bm.loops.layers.uv.new(f"UV{i_uv}"))
         
         if len(wedge_colors) > 0:
-            col_lay = mdl_bm.loops.layers.color.new("Color") # data.color_attributes?
+            col_lay = mdl_bm.loops.layers.color.new("Color")
 
         spl_norms = []
         for i_wedge in range(0, len(wedge_indices), 3):
@@ -89,6 +91,7 @@ def ReadMeshBulkData(self:Export, asset:UAsset, f:uasset.ByteStream): # FByteBul
             except ValueError: pass # Face already exists
 
         mesh = bpy.data.meshes.new(self.object_name)
+        mesh.name = self.object_name
         mdl_bm.to_mesh(mesh)
         mesh.normals_split_custom_set(spl_norms)
         mesh.use_auto_smooth = True
@@ -121,8 +124,7 @@ def ImportStaticMesh(self:Export, import_materials=True, log=True):
     socket_count = f.ReadInt32()# TArray<UStaticMeshSocket*> Sockets
     assert socket_count == 0
 
-    obj_guid = uuid.UUID('E4B068ED-42E9-F494-0BDA-31A241BB462E')
-    obj_version = asset.summary.custom_versions[obj_guid]
+    obj_version = asset.summary.custom_versions.get(v_obj_guid, 0)
     editor = not (asset.summary.package_flags & 0x8)
 
     if not editor_data_stripped:
@@ -134,7 +136,8 @@ def ImportStaticMesh(self:Export, import_materials=True, log=True):
 
     assert not cooked
 
-    ue4_14_or_above = True # TODO
+    ue4_v = asset.summary.compatible_version
+    ue4_14_or_above = ue4_v.major >= 4 and ue4_v.minor >= 14
     if ue4_14_or_above:
         speedtree_wind = f.ReadBool32()
         assert not speedtree_wind
@@ -150,23 +153,28 @@ def ImportStaticMesh(self:Export, import_materials=True, log=True):
                     local_uv_densities = (f.ReadFloat(), f.ReadFloat(), f.ReadFloat(), f.ReadFloat())
                 
                 if import_materials: mesh.materials.append(TryGetUMaterialImport(mat_interface, mesh=mesh))
-        
-        # remaining is SpeedTree
+    elif import_materials:
+        material_props:list[uasset.UProperty] = self.properties.TryGetValue('Materials', [])
+        for mat_prop in material_props:
+            mesh.materials.append(TryGetUMaterialImport(mat_prop.value, mesh=mesh))
+
+    # remaining is SpeedTree
 
     if log: print(f"Imported {self.object_name} ({len(mesh.vertices)} Verts, {len(mesh.polygons)} Tris, {len(mesh.materials)} Materials): {(time.time() - t0) * 1000:.2f}ms")
     return mesh
-def ImportStaticMeshUAsset(filepath:str, import_materials=True, log=False):
-    asset = UAsset(filepath)
+def ImportStaticMeshUAsset(filepath:str, uproject=None, import_materials=True, log=False):
+    asset = UAsset(filepath, uproject=uproject)
     asset.Read(False)
     for export in asset.exports:
         match export.export_class_type:
             case 'StaticMesh': return ImportStaticMesh(export, import_materials, log)
     if log: print(f"\"{filepath}\" Static Mesh Export Not Found")
     return None
-def ImportUMeshAsObject(filepath:str, materials:bool):
-    mesh = ImportStaticMeshUAsset(filepath, materials, True)
+def ImportUMeshAsObject(filepath:str, uproject=None, materials=True):
+    mesh = ImportStaticMeshUAsset(filepath, uproject, materials, True)
     bpy.context.collection.objects.link(bpy.data.objects.new(mesh.name, mesh))
 
+def menu_import_umesh(self, context): self.layout.operator(ImportUMesh.bl_idname, text="UE Static Mesh (.uasset)")
 class ImportUMesh(bpy.types.Operator, ImportHelper):
     """Import Unreal Engine Static Mesh File"""
     bl_idname    = "import.umesh"
@@ -180,17 +188,17 @@ class ImportUMesh(bpy.types.Operator, ImportHelper):
 
     def execute(self, context):
         for file in self.files:
-            if file.name != "": ImportUMeshAsObject(self.directory + file.name, self.materials)
+            if file.name != "": ImportUMeshAsObject(self.directory + file.name, materials=self.materials)
         return {'FINISHED'}
 
 reg_classes = ( ImportUMesh, )
 
 def register():
     register_helper.RegisterClasses(reg_classes)
-    register_helper.RegisterOperatorItem(bpy.types.TOPBAR_MT_file_import, ImportUMesh, "Unreal Engine Static Mesh (.uasset)")
+    register_helper.RegisterDrawFnc(bpy.types.TOPBAR_MT_file_import, ImportUMesh, menu_import_umesh)
 def unregister():
     register_helper.TryUnregisterClasses(reg_classes)
-    register_helper.RemoveOperatorItem(bpy.types.TOPBAR_MT_file_import, ImportUMesh)
+    register_helper.UnregisterDrawFnc(bpy.types.TOPBAR_MT_file_import, ImportUMesh, menu_import_umesh)
 
 if __name__ != "umesh":
     importlib.reload(uasset)
