@@ -71,6 +71,7 @@ class GraphData(): # TODO: redundant, only returned node_guids used
     def __init__(self):
         self.nodes_data:dict[str,NodeData] = {}
         self.node_guids = {}
+        self.param_nodes = {}
 
 def HandleTextureObject(expr:Import, nodes_data:dict[str,NodeData], node_data:NodeData):
     tex_param_node_exp = expr.value.node
@@ -264,6 +265,10 @@ def CreateNode(exp:Export, node_tree, nodes_data:dict[str,NodeData], graph_data,
     elif param_name:
         node.label = param_name
         node.width = max(node.width, 25 + 7*len(param_name))
+    if param_name:
+        param_nodes = graph_data.param_nodes.get(param_name)
+        if not param_nodes: graph_data.param_nodes[param_name] = param_nodes = []
+        param_nodes.append(node_data)
 
     HandleDefaultConstants(mapping, node, params)
     if mapping.constants:
@@ -445,11 +450,10 @@ def ImportNodeGraph(filepath, uproject=None, name=None, mesh=None, log=False): #
                     out = mat
 
                     for param in params.TryGetValue('ScalarParameterValues', ()):
-                        node_data = graph_data.node_guids.get(param.value.TryGetValue('ExpressionGUID'))
-                        if node_data: node_data.node.outputs[0].default_value = param.value.TryGetValue('ParameterValue')
+                        for node_data in graph_data.param_nodes.get(param.value.TryGetValue('ParameterName'), []):
+                            node_data.node.outputs[0].default_value = param.value.TryGetValue('ParameterValue')
                     for param in params.TryGetValue('VectorParameterValues', ()):
-                        node_data = graph_data.node_guids.get(param.value.TryGetValue('ExpressionGUID'))
-                        if node_data:
+                        for node_data in graph_data.param_nodes.get(param.value.TryGetValue('ParameterName'), []):
                             node, value = (node_data.node, param.value.TryGetValue('ParameterValue'))
                             node.inputs['RGB'].default_value = value.ToTuple()
                             node.inputs['A'].default_value = value.a
@@ -458,12 +462,11 @@ def ImportNodeGraph(filepath, uproject=None, name=None, mesh=None, log=False): #
                         if tex_imp:
                             tex = TryGetExtractedImport(tex_imp, tex_imp.asset.extract_dir) # TODO: reuse?
                             if tex:
-                                tex_node_data = graph_data.node_guids[param.value.TryGetValue('ExpressionGUID')]
-                                tex_node = tex_node_data.node
-                                if tex_node.bl_idname == 'ShaderNodeTexImage': SetNodeTexture(tex_node, tex)
-                                else:
-                                    for tex_node in tex_node_data.linked_tex_nodes: SetNodeTexture(tex_node, tex)
-
+                                for tex_node_data in graph_data.param_nodes.get(param.value.TryGetValue('ParameterName'), []):
+                                    tex_node = tex_node_data.node
+                                    if tex_node.bl_idname == 'ShaderNodeTexImage': SetNodeTexture(tex_node, tex)
+                                    else:
+                                        for tex_node in tex_node_data.linked_tex_nodes: SetNodeTexture(tex_node, tex)
                             else: print(f"Missing Texture \"{tex_imp.import_ref.object_name}\"")
                 case 'MaterialFunction': # TODO: very similar to Material, merge?
                     out = node_tree = bpy.data.node_groups.new(exp.object_name, 'ShaderNodeTree')

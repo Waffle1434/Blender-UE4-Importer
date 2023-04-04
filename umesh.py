@@ -11,23 +11,28 @@ from uasset import UAsset, Export, FStripDataFlags, FVector, FVector2D, FColor, 
 from umat import TryGetUMaterialImport
 
 v_obj_guid = uuid.UUID('E4B068ED-42E9-F494-0BDA-31A241BB462E')
+v_ent_obj_guid = uuid.UUID('9DFFBCD6-0158-494F-8212-21E288A8923C')
 
 def ReadMeshBulkData(self:Export, asset:UAsset, f:uasset.ByteStream): # FByteBulkData
     flags = f.ReadUInt32()
-    assert not (flags & 0x2) # BULKDATA_Size64Bit
-    count = f.ReadUInt32()
-    byte_size = f.ReadUInt32()
+    b64 = flags & 0x2000 # Size64Bit
+    assert not b64
+    count = f.ReadUInt64() if b64 else f.ReadUInt32()
+    byte_size = f.ReadUInt64() if b64 else f.ReadUInt32()
     offset = f.ReadInt32() if asset.summary.version_ue4 < 198 else f.ReadInt64()
-    if not (flags & 0x10000): offset += asset.summary.bulk_data_offset # BULKDATA_NoOffsetFixUp
+    if not (flags & 0x10000): offset += asset.summary.bulk_data_offset # NoOffsetFixUp
 
-    if flags & 0x20 or count == 0: return None # No data
-    assert not (flags & (0x800|0x100)) # OptionalPayload|PayloadInSeperateFile
+    if flags & 0x20 or count == 0: return None # BULKDATA_Unused, No data
+    assert not (flags & (0x100 | 0x800)) # PayloadInSeperateFile | OptionalPayload
     if flags & 0x1: # PayloadAtEndOfFile
+        assert offset + 16 <= os.fstat(f.byte_stream.raw.fileno()).st_size, "Offset is outside file"
         p = f.Position()
 
         # FByteBulkData::SerializeData
         assert asset.summary.compression_flags == 0
         f.Seek(offset)
+
+        if flags & (0x02 | 0x10 | 0x80): raise # CompressedZlib | CompressedLzo | CompressedLzx
         
         # FRawMesh
         version, version_licensee = (f.ReadInt32(), f.ReadInt32())
@@ -129,10 +134,17 @@ def ImportStaticMesh(self:Export, import_materials=True, log=True):
 
     if not editor_data_stripped:
         for src_model in self.properties['SourceModels'].value:
-            assert obj_version < 28 # FEditorObjectVersion::StaticMeshDeprecatedRawMesh
-            lod_mesh = ReadMeshBulkData(self, asset, f)
-            if lod_mesh: mesh = lod_mesh
-            guid, is_hash = (f.ReadGuid(), f.ReadBool32())
+            if obj_version < 28: # FEditorObjectVersion::StaticMeshDeprecatedRawMesh
+                lod_mesh = ReadMeshBulkData(self, asset, f)
+                if lod_mesh: mesh = lod_mesh
+                guid, is_hash = (f.ReadGuid(), f.ReadBool32())
+            elif f.ReadBool32():
+                lod_mesh = ReadMeshBulkData(self, asset, f)
+                if lod_mesh: mesh = lod_mesh
+
+                if obj_version >= 29: guid = f.ReadGuid() # FEditorObjectVersion::MeshDescriptionBulkDataGuid
+                enterprise_obj_version = asset.summary.custom_versions.get(v_ent_obj_guid, 0)
+                if enterprise_obj_version >= 8: is_hash = f.ReadBool32() # FEnterpriseObjectVersion::MeshDescriptionBulkDataGuidIsHash
 
     assert not cooked
 
@@ -213,8 +225,10 @@ if __name__ != "umesh":
     #filepath = r"F:\Projects\Unreal Projects\Assets\Content\VehicleVarietyPack\Meshes\SM_SUV.uasset"
     #filepath = r"F:\Projects\Unreal Projects\Assets\Content\VehicleVarietyPack\Meshes\SM_SportsCar.uasset"
     #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\ModSci_Engineer\Meshes\SM_Door_Small_A.uasset"
-    filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\VehicleVarietyPack\Meshes\SM_Truck_Box.uasset"
+    #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\VehicleVarietyPack\Meshes\SM_Truck_Box.uasset"
+    #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\ConstructionMachines\WheelLoader\SM_WheelLoader.uasset"
+    filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\FPS_Weapon_Bundle\Weapons\Meshes\Accessories\SM_Scope_25x56_X.uasset"
 
-    ImportUMeshAsObject(filepath, True)
+    ImportUMeshAsObject(filepath)
 
     print("Done")
