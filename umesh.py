@@ -7,46 +7,62 @@ from bpy_extras.io_utils import ImportHelper
 cur_dir = os.path.dirname(__file__)
 if cur_dir not in sys.path: sys.path.append(cur_dir)
 import uasset, umat, register_helper
-from uasset import UAsset, Export, FStripDataFlags, FVector, FVector2D, FColor, Euler
+from uasset import UAsset, Export, FStripDataFlags, FVector, FVector4, FVector2D, FColor, Euler, PrintableStruct
 from umat import TryGetUMaterialImport
 
-v_obj_guid = uuid.UUID('E4B068ED-42E9-F494-0BDA-31A241BB462E')
-v_ent_obj_guid = uuid.UUID('9DFFBCD6-0158-494F-8212-21E288A8923C')
+class FApexClothPhysToRenderVertData(PrintableStruct): _fields_ = ( ('pos_bary_d', FVector4), ('normal_bary_d', FVector4), ('tang_bary_d', FVector4), ('simul_mesh_vert_inds', c_int16 * 4), ('pad', c_int32 * 2) )
+class FPackedNormal(PrintableStruct): _fields_ = ( ('packed', c_uint32), )
+class FMeshUVHalf(PrintableStruct): _fields_ = ( ('u', c_uint16), ('v', c_uint16) )
+class BulkHeader:
+    def Read(self, f:uasset.ByteStream, summary:uasset.USummary):
+        self.flags = f.ReadUInt32()
+        b64 = self.flags & 0x2000 # Size64Bit
+        assert not b64
+        self.count = f.ReadUInt64() if b64 else f.ReadUInt32()
+        self.byte_size = f.ReadUInt64() if b64 else f.ReadUInt32()
+        self.offset = f.ReadInt32() if summary.version_ue4 < 198 else f.ReadInt64()
+        if not (self.flags & 0x10000): self.offset += summary.bulk_data_offset # NoOffsetFixUp
+        return self
 
+v_obj_guid = uuid.UUID('E4B068ED-42E9-F494-0BDA-31A241BB462E') # 0xE4B068ED, 0xF49442E9, 0xA231DA0B, 0x2E46BB41
+v_ent_obj_guid = uuid.UUID('9DFFBCD6-0158-494F-8212-21E288A8923C') # 0x9DFFBCD6, 0x494F0158, 0xE2211282, 0x3C92A888
+v_tang_guid = uuid.UUID('5579F886-4C1F-933A-7B08-BA832FB96163') # 
+v_ren_guid = uuid.UUID('12F88B9F-4AFC-8875-0CD9-7CA629BD3A38') # 0x12F88B9F, 0x88754AFC, 0xA67CD90C, 0x383ABD29
+v_skel_guid = uuid.UUID('D78A4A00-4697-E858-B519-A8BAB4467D48') # 0xD78A4A00, 0xE8584697, 0xBAA819B5, 0x487D46B4
+
+def ReadStripFlags(f:uasset.ByteStream, summary:uasset.USummary, min_v = 130) -> FStripDataFlags: return f.ReadStructure(FStripDataFlags) if summary.version_ue4 >= min_v else FStripDataFlags()
+def ReadFMultisizeIndexContainer(f:uasset.ByteStream, summary:uasset.USummary):
+    if summary.version_ue4 < 283: need_cpu_access = f.ReadBool32() # VER_UE4_KEEP_SKEL_MESH_INDEX_DATA
+    size = f.ReadUInt8()
+    return f.ReadBulkArray(c_uint16 if size == 2 else c_uint32)
 def ReadMeshBulkData(self:Export, asset:UAsset, f:uasset.ByteStream): # FByteBulkData
-    flags = f.ReadUInt32()
-    b64 = flags & 0x2000 # Size64Bit
-    assert not b64
-    count = f.ReadUInt64() if b64 else f.ReadUInt32()
-    byte_size = f.ReadUInt64() if b64 else f.ReadUInt32()
-    offset = f.ReadInt32() if asset.summary.version_ue4 < 198 else f.ReadInt64()
-    if not (flags & 0x10000): offset += asset.summary.bulk_data_offset # NoOffsetFixUp
+    bulk = BulkHeader().Read(f, asset.summary)
 
-    if flags & 0x20 or count == 0: return None # BULKDATA_Unused, No data
-    assert not (flags & (0x100 | 0x800)) # PayloadInSeperateFile | OptionalPayload
-    if flags & 0x1: # PayloadAtEndOfFile
-        assert offset + 16 <= os.fstat(f.byte_stream.raw.fileno()).st_size, "Offset is outside file"
+    if bulk.flags & 0x20 or bulk.count == 0: return None # BULKDATA_Unused, No data
+    assert not (bulk.flags & (0x100 | 0x800)) # PayloadInSeperateFile | OptionalPayload
+    if bulk.flags & 0x1: # PayloadAtEndOfFile
+        assert bulk.offset + 16 <= os.fstat(f.byte_stream.raw.fileno()).st_size, "Offset is outside file"
         p = f.Position()
 
         # FByteBulkData::SerializeData
         assert asset.summary.compression_flags == 0
-        f.Seek(offset)
+        f.Seek(bulk.offset)
 
-        if flags & (0x02 | 0x10 | 0x80): raise # CompressedZlib | CompressedLzo | CompressedLzx
+        if bulk.flags & (0x02 | 0x10 | 0x80): raise # CompressedZlib | CompressedLzo | CompressedLzx
         
         # FRawMesh
         version, version_licensee = (f.ReadInt32(), f.ReadInt32())
-        face_mat_indices:list[c_int32] = f.ReadStructure(c_int32 * f.ReadInt32())
+        face_mat_indices:list[c_int32] = f.ReadArray(c_int32)
         f.Seek(sizeof(c_uint32) * f.ReadInt32(), io.SEEK_CUR)#face_smoothing_mask = asset.f.ReadStructure(c_uint32 * asset.f.ReadInt32())
-        vertices:list[FVector] = f.ReadStructure(FVector * f.ReadInt32())
-        wedge_indices = f.ReadStructure(c_int32 * f.ReadInt32())
+        vertices:list[FVector] = f.ReadArray(FVector)
+        wedge_indices = f.ReadArray(c_int32)
         f.Seek(sizeof(FVector) * f.ReadInt32(), io.SEEK_CUR)#wedge_tangents = asset.f.ReadStructure(FVector * asset.f.ReadInt32())
         f.Seek(sizeof(FVector) * f.ReadInt32(), io.SEEK_CUR)#wedge_binormals = asset.f.ReadStructure(FVector * asset.f.ReadInt32())
-        wedge_normals:list[FVector] = f.ReadStructure(FVector * f.ReadInt32())
+        wedge_normals:list[FVector] = f.ReadArray(FVector)
         wedge_uvs:list[list[FVector2D]] = []
-        for i_uv in range(8): wedge_uvs.append(f.ReadStructure(FVector2D * f.ReadInt32()))
-        wedge_colors:list[FColor] = f.ReadStructure(FColor * f.ReadInt32())
-        if version >= 1: mat_index_to_import_index = f.ReadStructure(c_int32 * f.ReadInt32())
+        for i_uv in range(8): wedge_uvs.append(f.ReadArray(FVector2D))
+        wedge_colors:list[FColor] = f.ReadArray(FColor)
+        if version >= 1: mat_index_to_import_index = f.ReadArray(c_int32)
 
         mdl_bm = bmesh.new()
         for pos in vertices: mdl_bm.verts.new(Vector((pos.y, pos.x, pos.z)))
@@ -114,12 +130,12 @@ def ImportStaticMesh(self:Export, import_materials=True, log=True):
     self.ReadProperties(False, False)
     if f.ReadInt32(): self.guid = f.ReadGuid()
     
-    strip_flags = f.ReadStructure(FStripDataFlags) if asset.summary.version_ue4 >= 130 else FStripDataFlags()
+    strip_flags = ReadStripFlags(f, asset.summary)
     cooked = f.ReadBool32()
     body_setup = asset.DecodePackageIndex(f.ReadInt32())
     if asset.summary.version_ue4 >= 216: nav_collision = asset.DecodePackageIndex(f.ReadInt32())
     
-    editor_data_stripped = (strip_flags.global_strip_flags & 1) != 0
+    editor_data_stripped = strip_flags.StripForEditor()
     if not editor_data_stripped:
         assert asset.summary.version_ue4 >= 242
         highres_source_mesh_name, crc = (f.ReadFString(), f.ReadUInt32())
@@ -129,12 +145,12 @@ def ImportStaticMesh(self:Export, import_materials=True, log=True):
     socket_count = f.ReadInt32()# TArray<UStaticMeshSocket*> Sockets
     assert socket_count == 0
 
-    obj_version = asset.summary.custom_versions.get(v_obj_guid, 0)
+    v_obj = asset.summary.custom_versions.get(v_obj_guid, 0)
     editor = not (asset.summary.package_flags & 0x8)
 
     if not editor_data_stripped:
         for src_model in self.properties['SourceModels'].value:
-            if obj_version < 28: # FEditorObjectVersion::StaticMeshDeprecatedRawMesh
+            if v_obj < 28: # FEditorObjectVersion::StaticMeshDeprecatedRawMesh
                 lod_mesh = ReadMeshBulkData(self, asset, f)
                 if lod_mesh: mesh = lod_mesh
                 guid, is_hash = (f.ReadGuid(), f.ReadBool32())
@@ -142,9 +158,9 @@ def ImportStaticMesh(self:Export, import_materials=True, log=True):
                 lod_mesh = ReadMeshBulkData(self, asset, f)
                 if lod_mesh: mesh = lod_mesh
 
-                if obj_version >= 29: guid = f.ReadGuid() # FEditorObjectVersion::MeshDescriptionBulkDataGuid
-                enterprise_obj_version = asset.summary.custom_versions.get(v_ent_obj_guid, 0)
-                if enterprise_obj_version >= 8: is_hash = f.ReadBool32() # FEnterpriseObjectVersion::MeshDescriptionBulkDataGuidIsHash
+                if v_obj >= 29: guid = f.ReadGuid() # FEditorObjectVersion::MeshDescriptionBulkDataGuid
+                v_enterprise_obj = asset.summary.custom_versions.get(v_ent_obj_guid, 0)
+                if v_enterprise_obj >= 8: is_hash = f.ReadBool32() # FEnterpriseObjectVersion::MeshDescriptionBulkDataGuidIsHash
 
     assert not cooked
 
@@ -154,13 +170,12 @@ def ImportStaticMesh(self:Export, import_materials=True, log=True):
         speedtree_wind = f.ReadBool32()
         assert not speedtree_wind
 
-        if obj_version >= 8:
+        if v_obj >= 8:
             # TArray<FStaticMaterial> StaticMaterials
-            count = f.ReadInt32()
-            for i in range(count):
+            for i in range(f.ReadInt32()):
                 mat_interface, mat_slot_name = (asset.DecodePackageIndex(f.ReadInt32()), f.ReadFName(asset.names))
                 if editor: imported_mat_slot_name = f.ReadFName(asset.names)
-                if obj_version >= 10:
+                if v_obj >= 10:
                     initialized, override_densities = (f.ReadBool32(), f.ReadBool32())
                     local_uv_densities = (f.ReadFloat(), f.ReadFloat(), f.ReadFloat(), f.ReadFloat())
                 
@@ -174,12 +189,168 @@ def ImportStaticMesh(self:Export, import_materials=True, log=True):
 
     if log: print(f"Imported {self.object_name} ({len(mesh.vertices)} Verts, {len(mesh.polygons)} Tris, {len(mesh.materials)} Materials): {(time.time() - t0) * 1000:.2f}ms")
     return mesh
+def ImportSkeletalMesh(self:Export, import_materials=True):
+    asset = self.asset
+    f = asset.f
+    self.ReadProperties(False, False)
+    if f.ReadInt32(): self.guid = f.ReadGuid()
+
+    strip_flags = ReadStripFlags(f, asset.summary)
+    bounds = f.ReadStructure(uasset.FBoxSphereBounds)
+
+    v_obj = asset.summary.custom_versions.get(v_obj_guid, 0)
+    v_tangent = asset.summary.custom_versions.get(v_tang_guid, 0)
+    v_ren = asset.summary.custom_versions.get(v_ren_guid, 0)
+    v_skel = asset.summary.custom_versions.get(v_skel_guid, 0)
+
+    # TArray<FSkeletalMaterial> Materials;
+    materials = []
+    for i in range(f.ReadInt32()):
+        mat_import = asset.DecodePackageIndex(f.ReadInt32())
+        materials.append(mat_import)
+        assert v_obj < 8 # RefactorMeshEditorMaterials
+        if asset.summary.version_ue4 >= 302: shadow_casting = f.ReadBool32() # VER_UE4_MOVE_SKELETALMESH_SHADOWCASTING
+        if v_tangent >= 1: recompute_tangent = f.ReadBool32() # RuntimeRecomputeTangent
+        assert v_ren < 10 # TextureStreamingMeshUVChannelData
+    
+    # FReferenceSkeleton
+
+    #ref_bone_info = # TArray<FMeshBoneInfo>
+    for i in range(f.ReadInt32()):
+        name, i_parent = (f.ReadFName(asset.names), f.ReadInt32())
+        if asset.summary.version_ue4 < 310: color = f.ReadStructure(FColor) # VER_UE4_REFERENCE_SKELETON_REFACTOR
+        if asset.summary.version_ue4 >= 370: export_name = f.ReadFString() # VER_UE4_STORE_BONE_EXPORT_NAMES
+
+    ref_bone_pose:list[uasset.FTransform] = f.ReadArray(uasset.FTransform) # TArray<FTransform>
+    
+    if asset.summary.version_ue4 >= 310:# VER_UE4_REFERENCE_SKELETON_REFACTOR
+        #name_to_index_map
+        for i in range(f.ReadInt32()):
+            key, value = ( f.ReadFName(asset.names), f.ReadInt32() )
+
+    if v_skel < 12: # SplitModelAndRenderData
+        # lods = 
+        for i_lod in range(f.ReadInt32()):
+            # FStaticLODModel4
+            lod_strip_flags = ReadStripFlags(f, asset.summary)
+
+            has_cloth_data = False
+
+            # FSkelMeshSection4 sections
+            for i_sect in range(f.ReadInt32()):
+                sect_strip_flags = ReadStripFlags(f, asset.summary)
+                strip_server = sect_strip_flags.StripForServer()
+                i_mat = f.ReadInt16()
+                if v_skel < 1: i_chunk = f.ReadInt16() # CombineSectionWithChunk
+                if not strip_server: 
+                    i_base = f.ReadInt32()
+                    tri_count = f.ReadInt32()
+                if v_skel < 13: tri_sorting = f.ReadUInt8() # RemoveTriangleSorting
+                if asset.summary.version_ue4 >= 254: # VER_UE4_APEX_CLOTH
+                    if v_skel < 15: disabled = f.ReadBool32() # DeprecateSectionDisabledFlag
+                    if v_skel < 14: cloth_section = f.ReadInt16() # RemoveDuplicatedClothingSections
+                if asset.summary.version_ue4 >= 280: enable_cloth_lod_depricated = f.ReadUInt8() # VER_UE4_APEX_CLOTH_LOD
+                if v_tangent >= 1: recompute_tangent = f.ReadBool32() # RuntimeRecomputeTangent
+                if v_tangent >= 2: recompute_tangent_vert_mask_channel = f.ReadUInt8() # RecomputeTangentVertexColorMask
+                if v_obj >= 8: cast_shadow = f.ReadBool32() # RefactorMeshEditorMaterials
+                if v_skel >= 1: # CombineSectionWithChunk
+                    if not strip_server: i_base_vert = f.ReadUInt32()
+                    if not sect_strip_flags.StripForEditor(): # TODO
+                        if v_skel < 2: raise # CombineSoftAndRigidVerts
+                        raise
+                    raise
+            
+            if v_skel < 12: indices = ReadFMultisizeIndexContainer(f, asset.summary) # SplitModelAndRenderData
+            else: indices = f.ReadArray(c_uint32)
+            
+            active_bone_indices = f.ReadArray(c_int16)
+
+            if v_skel < 1: # CombineSectionWithChunk
+                # TArray<FSkelMeshChunk4> Chunks
+                for i_chunk in range(f.ReadInt32()):
+                    strip_flags = ReadStripFlags(f, asset.summary)
+                    if not strip_flags.StripForServer(): base_vert_i = f.ReadInt32()
+                    if not strip_flags.StripForEditor():
+                        skel_influences = 8 if asset.summary.version_ue4 >= 332 else 4 # VER_UE4_SUPPORT_8_BONE_INFLUENCES_SKELETAL_MESHES
+                        # FRigidVertex4 rigid_verts
+                        for i in range(f.ReadInt32()):
+                            # FSkelMeshVertexBase
+                            pos = f.ReadStructure(FVector)
+                            if v_ren < 26: packed_normals = f.ReadStructure(FPackedNormal * 3) # IncreaseNormalPrecision
+                            else: new_nx, new_ny, new_nz = (f.ReadStructure(FVector), f.ReadStructure(FVector), f.ReadStructure(FVector4))
+                            
+                            uvs, color, i_bone = (f.ReadStructure(FVector2D * 4), f.ReadStructure(FColor), f.ReadUInt8())
+                        # FSoftVertex4 soft_verts
+                        for i in range(f.ReadInt32()):
+                            raise # TODO: soft_verts
+                            uvs, color = (f.ReadStructure(FVector2D * 4), f.ReadStructure(FColor))
+                            raise # TODO: Ar << V.Infs;
+                    bone_map, rigid_vert_c, soft_vert_c, max_bone_influences = (f.ReadArray(c_uint16), f.ReadInt32(), f.ReadInt32(), f.ReadInt32())
+                    if asset.summary.version_ue4 >= 254: # VER_UE4_APEX_CLOTH
+                        cloth_mappings, physical_mesh_verts, physical_mesh_norms = (f.ReadArray(FApexClothPhysToRenderVertData), f.ReadArray(FVector), f.ReadArray(FVector))
+                        cloth_asset_i, cloth_submesh_i = (f.ReadInt16(), f.ReadInt16())
+                        has_cloth_data |= len(cloth_mappings) > 0
+            
+            lod_size = f.ReadInt32()
+            if not lod_strip_flags.StripForServer(): vert_c = f.ReadInt32()
+            required_bones = f.ReadArray(c_int16)
+            if not lod_strip_flags.StripForEditor():
+                bulk = BulkHeader().Read(f, asset.summary)
+                if not (bulk.flags & (0x1 | 0x100)): # BULKDATA_PayloadAtEndOfFile | BULKDATA_PayloadInSeperateFile
+                    if bulk.flags & 0x40: f.Seek(bulk.byte_size, mode=io.SEEK_CUR) # BULKDATA_ForceInlinePayload
+            if asset.summary.version_ue4 >= 152: mesh_to_import_vert_map, max_import_vert_i = (f.ReadArray(c_int32), f.ReadInt32()) # VER_UE4_ADD_SKELMESH_MESHTOIMPORTVERTEXMAP
+            
+            mdl_bm = bmesh.new()
+
+            if not lod_strip_flags.StripForServer(): # geometry TODO: var?
+                uv_c = f.ReadInt32()
+                if v_skel < 12: # SplitModelAndRenderData
+                    # FSkeletalMeshVertexBuffer4 VertexBufferGPUSkin
+                    vb_strip = ReadStripFlags(f, asset.summary, 269) # VER_UE4_STATIC_SKELETAL_MESH_SERIALIZATION_FIX
+                    uv_c, float_uvs = (f.ReadInt32(), f.ReadBool32())
+                    assert uv_c > 0 and uv_c < 32
+                    if asset.summary.version_ue4 >= 334 and v_skel < 7: extra_bone_influences = f.ReadBool32() # VER_UE4_SUPPORT_GPUSKINNING_8_BONE_INFLUENCES & UseSeparateSkinWeightBuffer
+                    mesh_extension, mesh_origin = (f.ReadStructure(FVector), f.ReadStructure(FVector))
+                    skel_infl_c = 8 if extra_bone_influences else 4
+                    vert_type = FVector2D if float_uvs else FMeshUVHalf
+                    el_size = f.ReadInt32() # ReadBulkArray
+                    for i in range(f.ReadInt32()):
+                        n_packed_x, n_packed_z = (f.ReadStructure(FPackedNormal), f.ReadStructure(FPackedNormal))
+                        if v_skel < 7: # UseSeparateSkinWeightBuffer, FSkinWeightInfo
+                            assert skel_infl_c == 4
+                            bone_indices = f.ReadStructure(c_ubyte * skel_infl_c)
+                            bone_weights = f.ReadStructure(c_ubyte * skel_infl_c)
+                        pos = f.ReadStructure(FVector)
+                        uvs = f.ReadStructure(vert_type * uv_c)
+
+                        mdl_bm.verts.new(Vector((pos.y, pos.x, pos.z)))
+                    
+                    if v_skel >= 7: # UseSeparateSkinWeightBuffer
+                        raise # FSkinWeightVertexBuffer SkinWeights
+                    # TODO: LoadingMesh->bHasVertexColors? 
+                    if not lod_strip_flags.StripClassData(1): adj_indices = ReadFMultisizeIndexContainer(f, asset.summary) # CDSF_AdjacencyData
+                    if asset.summary.version_ue4 >= 254 and has_cloth_data: raise # VER_UE4_APEX_CLOTH
+            
+            mdl_bm.verts.ensure_lookup_table()
+            for i in range(0, len(indices), 3):
+                face = mdl_bm.faces.new((
+                    mdl_bm.verts[indices[i]],
+                    mdl_bm.verts[indices[i+1]],
+                    mdl_bm.verts[indices[i+2]]
+                ))
+
+            mesh = bpy.data.meshes.new(self.object_name)
+            mesh.name = self.object_name
+            mdl_bm.to_mesh(mesh)
+            return mesh
+    else: raise # TODO
 def ImportStaticMeshUAsset(filepath:str, uproject=None, import_materials=True, log=False):
     asset = UAsset(filepath, uproject=uproject)
     asset.Read(False)
     for export in asset.exports:
         match export.export_class_type:
             case 'StaticMesh': return ImportStaticMesh(export, import_materials, log)
+            case 'SkeletalMesh': return ImportSkeletalMesh(export, import_materials)
     if log: print(f"\"{filepath}\" Static Mesh Export Not Found")
     return None
 def ImportUMeshAsObject(filepath:str, uproject=None, materials=True):
@@ -227,7 +398,8 @@ if __name__ != "umesh":
     #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\ModSci_Engineer\Meshes\SM_Door_Small_A.uasset"
     #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\VehicleVarietyPack\Meshes\SM_Truck_Box.uasset"
     #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\ConstructionMachines\WheelLoader\SM_WheelLoader.uasset"
-    filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\FPS_Weapon_Bundle\Weapons\Meshes\Accessories\SM_Scope_25x56_X.uasset"
+    #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\FPS_Weapon_Bundle\Weapons\Meshes\Accessories\SM_Scope_25x56_X.uasset"
+    filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\FPS_Weapon_Bundle\Weapons\Meshes\KA74U\SK_KA74U_X.uasset"
 
     ImportUMeshAsObject(filepath)
 

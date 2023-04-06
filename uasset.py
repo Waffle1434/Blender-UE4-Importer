@@ -48,6 +48,10 @@ class ByteStream:
     def ReadIntBool(self): return self.ReadInt32() == 1
 
     def ReadStructure(self, ty:Structure): return ty.from_buffer_copy(self.byte_stream.read(sizeof(ty)))
+    def ReadArray(self, ty:Structure) -> list: return self.ReadStructure(ty * self.ReadInt32())
+    def ReadBulkArray(self, ty:Structure) -> list:
+        el_size = self.ReadInt32()
+        return self.ReadArray(ty)
     def ReadGuid(self): return uuid.UUID(bytes_le=self.byte_stream.read(16))
     def ReadFString(self):
         length = self.ReadInt32()
@@ -97,6 +101,7 @@ class FIntPoint(PrintableStruct): _fields_ = ( ('x', c_int), ('y', c_int) )
 class FQuat(PrintableStruct):
     _fields_ = ( ('x', c_float), ('y', c_float), ('z', c_float), ('w', c_float) )
     def __str__(self): return StructToString(self, False)
+class FTransform(PrintableStruct): _fields_ = ( ('rotation', FQuat), ('translation', FVector), ('scale', FVector) )
 class FColor(PrintableStruct): _fields_ = ( ('b', c_ubyte), ('g', c_ubyte), ('r', c_ubyte), ('a', c_ubyte) )
 class FLinearColor(PrintableStruct):
     _fields_ = ( ('r', c_float), ('g', c_float), ('b', c_float), ('a', c_float) )
@@ -105,7 +110,12 @@ class FLinearColor(PrintableStruct):
 class FBox(PrintableStruct): _fields_ = ( ('min', FVector), ('max', FVector), ('valid', c_ubyte) )
 class FBoxSphereBounds(PrintableStruct): _fields_ = ( ('origin', FVector), ('box_extent', FVector), ('sphere_radius', c_float) )
 class FMeshSectionInfo(PrintableStruct): _fields_ = ( ('material_index', c_int), ('collision', c_bool), ('shadow', c_bool) )
-class FStripDataFlags(PrintableStruct): _fields_ = ( ('global_strip_flags', c_ubyte), ('class_strip_flags', c_ubyte) )
+class FStripDataFlags(PrintableStruct):
+    _fields_ = ( ('global_strip_flags', c_ubyte), ('class_strip_flags', c_ubyte) )
+    def StripForServer(self): return self.global_strip_flags & 2 != 0
+    def StripForEditor(self): return self.global_strip_flags & 1 != 0
+    def StripClassData(self, flag): return self.class_strip_flags & flag != 0
+#class TMapPair(PrintableStruct): _fields_ = ( ('key'), ('value') )
 
 prop_table_types = { "ExpressionOutput", "ScalarParameterValue", "TextureParameterValue", "VectorParameterValue", "MaterialFunctionInfo", "StaticMaterial", "KAggregateGeom", "BodyInstance", 
                     "KConvexElem", "Transform", "StaticMeshSourceModel", "MeshBuildSettings", "MeshReductionSettings", "MeshUVChannelInfo", "AssetEditorOrbitCameraPosition", "SimpleMemberReference", 
