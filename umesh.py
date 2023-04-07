@@ -1,4 +1,4 @@
-import os, io, sys, math, uuid, bpy, bmesh, importlib, time
+import os, io, sys, math, uuid, bpy, bmesh, importlib, time, struct
 from ctypes import *
 from mathutils import Vector
 from bpy.props import *
@@ -10,9 +10,18 @@ import uasset, umat, register_helper
 from uasset import UAsset, Export, FStripDataFlags, FVector, FVector4, FVector2D, FColor, Euler, PrintableStruct
 from umat import TryGetUMaterialImport
 
+def uint16_to_float(value:c_uint16):
+    sign = (value >> 15) & 0b0000000000000001
+    exp  = (value >> 10) & 0b0000000000011111
+    mant =  value        & 0b0000001111111111
+    exp  = exp + (127 - 15)
+    return struct.unpack('<f', struct.pack('<I', (sign << 31) | (exp << 23) | (mant << 13)))[0]
+
 class FApexClothPhysToRenderVertData(PrintableStruct): _fields_ = ( ('pos_bary_d', FVector4), ('normal_bary_d', FVector4), ('tang_bary_d', FVector4), ('simul_mesh_vert_inds', c_int16 * 4), ('pad', c_int32 * 2) )
 class FPackedNormal(PrintableStruct): _fields_ = ( ('packed', c_uint32), )
-class FMeshUVHalf(PrintableStruct): _fields_ = ( ('u', c_uint16), ('v', c_uint16) )
+class FMeshUVHalf(PrintableStruct):
+    _fields_ = ( ('u', c_uint16), ('v', c_uint16) )
+    def ToFloat2(self): return (uint16_to_float(self.u), 1 - uint16_to_float(self.v))
 class BulkHeader:
     def Read(self, f:uasset.ByteStream, summary:uasset.USummary):
         self.flags = f.ReadUInt32()
@@ -53,11 +62,11 @@ def ReadMeshBulkData(self:Export, asset:UAsset, f:uasset.ByteStream): # FByteBul
         # FRawMesh
         version, version_licensee = (f.ReadInt32(), f.ReadInt32())
         face_mat_indices:list[c_int32] = f.ReadArray(c_int32)
-        f.Seek(sizeof(c_uint32) * f.ReadInt32(), io.SEEK_CUR)#face_smoothing_mask = asset.f.ReadStructure(c_uint32 * asset.f.ReadInt32())
+        f.SkipArray(c_uint32)#face_smoothing_mask = f.ReadArray(c_uint32)
         vertices:list[FVector] = f.ReadArray(FVector)
         wedge_indices = f.ReadArray(c_int32)
-        f.Seek(sizeof(FVector) * f.ReadInt32(), io.SEEK_CUR)#wedge_tangents = asset.f.ReadStructure(FVector * asset.f.ReadInt32())
-        f.Seek(sizeof(FVector) * f.ReadInt32(), io.SEEK_CUR)#wedge_binormals = asset.f.ReadStructure(FVector * asset.f.ReadInt32())
+        f.SkipArray(FVector)#wedge_tangents = f.ReadArray(FVector)
+        f.SkipArray(FVector)#wedge_binormals = f.ReadArray(FVector)
         wedge_normals:list[FVector] = f.ReadArray(FVector)
         wedge_uvs:list[list[FVector2D]] = []
         for i_uv in range(8): wedge_uvs.append(f.ReadArray(FVector2D))
@@ -79,7 +88,7 @@ def ReadMeshBulkData(self:Export, asset:UAsset, f:uasset.ByteStream): # FByteBul
         for i_wedge in range(0, len(wedge_indices), 3):
             try:
                 face = mdl_bm.faces.new((
-                    mdl_bm.verts[wedge_indices[i_wedge]],
+                    mdl_bm.verts[wedge_indices[i_wedge+0]],
                     mdl_bm.verts[wedge_indices[i_wedge+1]],
                     mdl_bm.verts[wedge_indices[i_wedge+2]]
                 ))
@@ -212,7 +221,7 @@ def ImportSkeletalMesh(self:Export, import_materials=True):
         if asset.summary.version_ue4 >= 302: shadow_casting = f.ReadBool32() # VER_UE4_MOVE_SKELETALMESH_SHADOWCASTING
         if v_tangent >= 1: recompute_tangent = f.ReadBool32() # RuntimeRecomputeTangent
         assert v_ren < 10 # TextureStreamingMeshUVChannelData
-    
+
     # FReferenceSkeleton
 
     #ref_bone_info = # TArray<FMeshBoneInfo>
@@ -237,6 +246,7 @@ def ImportSkeletalMesh(self:Export, import_materials=True):
             has_cloth_data = False
 
             # FSkelMeshSection4 sections
+            sections = []
             for i_sect in range(f.ReadInt32()):
                 sect_strip_flags = ReadStripFlags(f, asset.summary)
                 strip_server = sect_strip_flags.StripForServer()
@@ -245,6 +255,7 @@ def ImportSkeletalMesh(self:Export, import_materials=True):
                 if not strip_server: 
                     i_base = f.ReadInt32()
                     tri_count = f.ReadInt32()
+                    sections.append((i_mat, i_base, tri_count))
                 if v_skel < 13: tri_sorting = f.ReadUInt8() # RemoveTriangleSorting
                 if asset.summary.version_ue4 >= 254: # VER_UE4_APEX_CLOTH
                     if v_skel < 15: disabled = f.ReadBool32() # DeprecateSectionDisabledFlag
@@ -304,6 +315,11 @@ def ImportSkeletalMesh(self:Export, import_materials=True):
 
             if not lod_strip_flags.StripForServer(): # geometry TODO: var?
                 uv_c = f.ReadInt32()
+
+                mdl_uvs = []
+                for i_uv in range(uv_c): mdl_uvs.append(mdl_bm.loops.layers.uv.new(f"UV{i_uv}"))
+
+                ue_uvs = []
                 if v_skel < 12: # SplitModelAndRenderData
                     # FSkeletalMeshVertexBuffer4 VertexBufferGPUSkin
                     vb_strip = ReadStripFlags(f, asset.summary, 269) # VER_UE4_STATIC_SKELETAL_MESH_SERIALIZATION_FIX
@@ -322,6 +338,7 @@ def ImportSkeletalMesh(self:Export, import_materials=True):
                             bone_weights = f.ReadStructure(c_ubyte * skel_infl_c)
                         pos = f.ReadStructure(FVector)
                         uvs = f.ReadStructure(vert_type * uv_c)
+                        ue_uvs.append(uvs)
 
                         mdl_bm.verts.new(Vector((pos.y, pos.x, pos.z)))
                     
@@ -334,14 +351,30 @@ def ImportSkeletalMesh(self:Export, import_materials=True):
             mdl_bm.verts.ensure_lookup_table()
             for i in range(0, len(indices), 3):
                 face = mdl_bm.faces.new((
-                    mdl_bm.verts[indices[i]],
+                    mdl_bm.verts[indices[i+0]],
                     mdl_bm.verts[indices[i+1]],
                     mdl_bm.verts[indices[i+2]]
                 ))
+                loops = face.loops
+                for i_uv in range(uv_c):
+                    loops[0][mdl_uvs[i_uv]].uv = ue_uvs[indices[i+0]][i_uv].ToFloat2()
+                    loops[1][mdl_uvs[i_uv]].uv = ue_uvs[indices[i+1]][i_uv].ToFloat2()
+                    loops[2][mdl_uvs[i_uv]].uv = ue_uvs[indices[i+2]][i_uv].ToFloat2()
+            
+            mdl_bm.faces.ensure_lookup_table()
+            for i_mat, i_base, tri_count in sections:
+                i_tri_base = int(i_base/3)
+                for i_tri in range(i_tri_base, i_tri_base + tri_count):
+                    mdl_bm.faces[i_tri].material_index = i_mat
 
             mesh = bpy.data.meshes.new(self.object_name)
             mesh.name = self.object_name
             mdl_bm.to_mesh(mesh)
+
+            if import_materials:
+                for mat_imp in materials:
+                    mesh.materials.append(TryGetUMaterialImport(mat_imp, mesh=mesh))
+
             return mesh
     else: raise # TODO
 def ImportStaticMeshUAsset(filepath:str, uproject=None, import_materials=True, log=False):
@@ -399,7 +432,8 @@ if __name__ != "umesh":
     #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\VehicleVarietyPack\Meshes\SM_Truck_Box.uasset"
     #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\ConstructionMachines\WheelLoader\SM_WheelLoader.uasset"
     #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\FPS_Weapon_Bundle\Weapons\Meshes\Accessories\SM_Scope_25x56_X.uasset"
-    filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\FPS_Weapon_Bundle\Weapons\Meshes\KA74U\SK_KA74U_X.uasset"
+    #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\FPS_Weapon_Bundle\Weapons\Meshes\KA74U\SK_KA74U_X.uasset"
+    filepath = r"F:\Projects\Unreal Projects\Assets\Content\FPS_Weapon_Bundle\Weapons\Meshes\KA74U\SK_KA74U_X.uasset"
 
     ImportUMeshAsObject(filepath)
 

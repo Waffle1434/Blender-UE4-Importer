@@ -52,6 +52,7 @@ class ByteStream:
     def ReadBulkArray(self, ty:Structure) -> list:
         el_size = self.ReadInt32()
         return self.ReadArray(ty)
+    def SkipArray(self, ty:Structure): self.Seek(sizeof(ty) * self.ReadInt32(), io.SEEK_CUR)
     def ReadGuid(self): return uuid.UUID(bytes_le=self.byte_stream.read(16))
     def ReadFString(self):
         length = self.ReadInt32()
