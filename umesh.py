@@ -73,24 +73,24 @@ def ReadMeshBulkData(self:Export, asset:UAsset, f:uasset.ByteStream): # FByteBul
         wedge_colors:list[FColor] = f.ReadArray(FColor)
         if version >= 1: mat_index_to_import_index = f.ReadArray(c_int32)
 
-        mdl_bm = bmesh.new()
-        for pos in vertices: mdl_bm.verts.new(Vector((pos.y, pos.x, pos.z)))
-        mdl_bm.verts.ensure_lookup_table()
+        bmsh = bmesh.new()
+        for pos in vertices: bmsh.verts.new(Vector((pos.y, pos.x, pos.z)))
+        bmsh.verts.ensure_lookup_table()
         
         uvs = []
         for i_uv in range(len(wedge_uvs)):
-            if len(wedge_uvs[i_uv]) > 0: uvs.append(mdl_bm.loops.layers.uv.new(f"UV{i_uv}"))
+            if len(wedge_uvs[i_uv]) > 0: uvs.append(bmsh.loops.layers.uv.new(f"UV{i_uv}"))
         
         if len(wedge_colors) > 0:
-            col_lay = mdl_bm.loops.layers.color.new("Color")
+            col_lay = bmsh.loops.layers.color.new("Color")
 
         spl_norms = []
         for i_wedge in range(0, len(wedge_indices), 3):
             try:
-                face = mdl_bm.faces.new((
-                    mdl_bm.verts[wedge_indices[i_wedge+0]],
-                    mdl_bm.verts[wedge_indices[i_wedge+1]],
-                    mdl_bm.verts[wedge_indices[i_wedge+2]]
+                face = bmsh.faces.new((
+                    bmsh.verts[wedge_indices[i_wedge+0]],
+                    bmsh.verts[wedge_indices[i_wedge+1]],
+                    bmsh.verts[wedge_indices[i_wedge+2]]
                 ))
                 loops = face.loops
                 i_poly = int(i_wedge / 3)
@@ -122,7 +122,7 @@ def ReadMeshBulkData(self:Export, asset:UAsset, f:uasset.ByteStream): # FByteBul
 
         mesh = bpy.data.meshes.new(self.object_name)
         mesh.name = self.object_name
-        mdl_bm.to_mesh(mesh)
+        bmsh.to_mesh(mesh)
         mesh.normals_split_custom_set(spl_norms)
         mesh.use_auto_smooth = True
         mesh.transform(Euler((0,0,math.radians(0))).to_matrix().to_4x4()*0.01)
@@ -198,7 +198,7 @@ def ImportStaticMesh(self:Export, import_materials=True, log=True):
 
     if log: print(f"Imported {self.object_name} ({len(mesh.vertices)} Verts, {len(mesh.polygons)} Tris, {len(mesh.materials)} Materials): {(time.time() - t0) * 1000:.2f}ms")
     return mesh
-def ImportSkeletalMesh(self:Export, import_materials=True):
+def ImportSkeletalMesh(self:Export, import_materials=True, o=None):
     asset = self.asset
     f = asset.f
     self.ReadProperties(False, False)
@@ -211,6 +211,8 @@ def ImportSkeletalMesh(self:Export, import_materials=True):
     v_tangent = asset.summary.custom_versions.get(v_tang_guid, 0)
     v_ren = asset.summary.custom_versions.get(v_ren_guid, 0)
     v_skel = asset.summary.custom_versions.get(v_skel_guid, 0)
+
+    bmsh = bmesh.new()
 
     # TArray<FSkeletalMaterial> Materials;
     materials = []
@@ -225,18 +227,31 @@ def ImportSkeletalMesh(self:Export, import_materials=True):
     # FReferenceSkeleton
 
     #ref_bone_info = # TArray<FMeshBoneInfo>
+    ref_bone_info = []
     for i in range(f.ReadInt32()):
         name, i_parent = (f.ReadFName(asset.names), f.ReadInt32())
         if asset.summary.version_ue4 < 310: color = f.ReadStructure(FColor) # VER_UE4_REFERENCE_SKELETON_REFACTOR
         if asset.summary.version_ue4 >= 370: export_name = f.ReadFString() # VER_UE4_STORE_BONE_EXPORT_NAMES
+        ref_bone_info.append((name, i_parent))
 
     ref_bone_pose:list[uasset.FTransform] = f.ReadArray(uasset.FTransform) # TArray<FTransform>
     
-    if asset.summary.version_ue4 >= 310:# VER_UE4_REFERENCE_SKELETON_REFACTOR
-        #name_to_index_map
+    index_to_name = {}
+    if asset.summary.version_ue4 >= 310: # VER_UE4_REFERENCE_SKELETON_REFACTOR
         for i in range(f.ReadInt32()):
             key, value = ( f.ReadFName(asset.names), f.ReadInt32() )
+            index_to_name[value] = key
+    else:
+        for i in range(len(ref_bone_info)): index_to_name[i] = ref_bone_info[i][0]
 
+    mesh = bpy.data.meshes.new(self.object_name)
+    mesh.name = self.object_name
+    o = bpy.data.objects.new(mesh.name, mesh)
+    bpy.context.collection.objects.link(o)
+
+    bone_groups:list[bpy.types.VertexGroup] = []
+    for i in sorted(index_to_name): bone_groups.append(o.vertex_groups.new(name=index_to_name[i]))
+    
     if v_skel < 12: # SplitModelAndRenderData
         # lods = 
         for i_lod in range(f.ReadInt32()):
@@ -311,15 +326,14 @@ def ImportSkeletalMesh(self:Export, import_materials=True):
                     if bulk.flags & 0x40: f.Seek(bulk.byte_size, mode=io.SEEK_CUR) # BULKDATA_ForceInlinePayload
             if asset.summary.version_ue4 >= 152: mesh_to_import_vert_map, max_import_vert_i = (f.ReadArray(c_int32), f.ReadInt32()) # VER_UE4_ADD_SKELMESH_MESHTOIMPORTVERTEXMAP
             
-            mdl_bm = bmesh.new()
-
+            vert_weights = []
             if not lod_strip_flags.StripForServer(): # geometry TODO: var?
                 uv_c = f.ReadInt32()
 
-                mdl_uvs = []
-                for i_uv in range(uv_c): mdl_uvs.append(mdl_bm.loops.layers.uv.new(f"UV{i_uv}"))
-
                 ue_uvs = []
+                mdl_uvs = []
+                for i_uv in range(uv_c): mdl_uvs.append(bmsh.loops.layers.uv.new(f"UV{i_uv}"))
+
                 if v_skel < 12: # SplitModelAndRenderData
                     # FSkeletalMeshVertexBuffer4 VertexBufferGPUSkin
                     vb_strip = ReadStripFlags(f, asset.summary, 269) # VER_UE4_STATIC_SKELETAL_MESH_SERIALIZATION_FIX
@@ -328,6 +342,8 @@ def ImportSkeletalMesh(self:Export, import_materials=True):
                     if asset.summary.version_ue4 >= 334 and v_skel < 7: extra_bone_influences = f.ReadBool32() # VER_UE4_SUPPORT_GPUSKINNING_8_BONE_INFLUENCES & UseSeparateSkinWeightBuffer
                     mesh_extension, mesh_origin = (f.ReadStructure(FVector), f.ReadStructure(FVector))
                     skel_infl_c = 8 if extra_bone_influences else 4
+                    i_vert = 0
+
                     vert_type = FVector2D if float_uvs else FMeshUVHalf
                     el_size = f.ReadInt32() # ReadBulkArray
                     for i in range(f.ReadInt32()):
@@ -336,11 +352,15 @@ def ImportSkeletalMesh(self:Export, import_materials=True):
                             assert skel_infl_c == 4
                             bone_indices = f.ReadStructure(c_ubyte * skel_infl_c)
                             bone_weights = f.ReadStructure(c_ubyte * skel_infl_c)
+
+                            vert_weights.append((bone_indices, bone_weights))
+                            #for i_w in range(skel_infl_c): bone_groups[bone_indices[i_w]].add((i_vert,), bone_weights[i_w] / 255, 'REPLACE')
                         pos = f.ReadStructure(FVector)
                         uvs = f.ReadStructure(vert_type * uv_c)
                         ue_uvs.append(uvs)
 
-                        mdl_bm.verts.new(Vector((pos.y, pos.x, pos.z)))
+                        bmsh.verts.new(Vector((pos.y, pos.x, pos.z)))
+                        i_vert += 1
                     
                     if v_skel >= 7: # UseSeparateSkinWeightBuffer
                         raise # FSkinWeightVertexBuffer SkinWeights
@@ -348,12 +368,12 @@ def ImportSkeletalMesh(self:Export, import_materials=True):
                     if not lod_strip_flags.StripClassData(1): adj_indices = ReadFMultisizeIndexContainer(f, asset.summary) # CDSF_AdjacencyData
                     if asset.summary.version_ue4 >= 254 and has_cloth_data: raise # VER_UE4_APEX_CLOTH
             
-            mdl_bm.verts.ensure_lookup_table()
+            bmsh.verts.ensure_lookup_table()
             for i in range(0, len(indices), 3):
-                face = mdl_bm.faces.new((
-                    mdl_bm.verts[indices[i+0]],
-                    mdl_bm.verts[indices[i+1]],
-                    mdl_bm.verts[indices[i+2]]
+                face = bmsh.faces.new((
+                    bmsh.verts[indices[i+0]],
+                    bmsh.verts[indices[i+1]],
+                    bmsh.verts[indices[i+2]]
                 ))
                 loops = face.loops
                 for i_uv in range(uv_c):
@@ -361,15 +381,18 @@ def ImportSkeletalMesh(self:Export, import_materials=True):
                     loops[1][mdl_uvs[i_uv]].uv = ue_uvs[indices[i+1]][i_uv].ToFloat2()
                     loops[2][mdl_uvs[i_uv]].uv = ue_uvs[indices[i+2]][i_uv].ToFloat2()
             
-            mdl_bm.faces.ensure_lookup_table()
+            bmsh.faces.ensure_lookup_table()
             for i_mat, i_base, tri_count in sections:
                 i_tri_base = int(i_base/3)
                 for i_tri in range(i_tri_base, i_tri_base + tri_count):
-                    mdl_bm.faces[i_tri].material_index = i_mat
+                    bmsh.faces[i_tri].material_index = i_mat
 
-            mesh = bpy.data.meshes.new(self.object_name)
-            mesh.name = self.object_name
-            mdl_bm.to_mesh(mesh)
+            bmsh.to_mesh(mesh)
+            i_vert = 0
+            for bone_indices, bone_weights in vert_weights:
+                for i_w in range(skel_infl_c):
+                    bone_groups[bone_indices[i_w]].add((i_vert,), bone_weights[i_w] / 255, 'REPLACE')
+                i_vert += 1
 
             if import_materials:
                 for mat_imp in materials:
@@ -377,18 +400,20 @@ def ImportSkeletalMesh(self:Export, import_materials=True):
 
             return mesh
     else: raise # TODO
-def ImportStaticMeshUAsset(filepath:str, uproject=None, import_materials=True, log=False):
+def ImportStaticMeshUAsset(filepath:str, uproject=None, import_materials=True, log=False, o=None):
     asset = UAsset(filepath, uproject=uproject)
     asset.Read(False)
     for export in asset.exports:
         match export.export_class_type:
             case 'StaticMesh': return ImportStaticMesh(export, import_materials, log)
-            case 'SkeletalMesh': return ImportSkeletalMesh(export, import_materials)
+            case 'SkeletalMesh': return ImportSkeletalMesh(export, import_materials, o)
     if log: print(f"\"{filepath}\" Static Mesh Export Not Found")
     return None
 def ImportUMeshAsObject(filepath:str, uproject=None, materials=True):
-    mesh = ImportStaticMeshUAsset(filepath, uproject, materials, True)
-    bpy.context.collection.objects.link(bpy.data.objects.new(mesh.name, mesh))
+    o = bpy.data.objects.new("tmp", None)
+    bpy.context.collection.objects.link(o)
+    mesh = ImportStaticMeshUAsset(filepath, uproject, materials, True, o)
+    o.name = mesh.name
 
 def menu_import_umesh(self, context): self.layout.operator(ImportUMesh.bl_idname, text="UE Static Mesh (.uasset)")
 class ImportUMesh(bpy.types.Operator, ImportHelper):
