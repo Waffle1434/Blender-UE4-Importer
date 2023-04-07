@@ -131,46 +131,44 @@ def ProcessUMapExport(export:Export, import_meshes=True, import_materials=True, 
 
             obj = SetupObject(bpy.context, export.object_name, probe)
             TryApplyRootComponent(export, obj, scale=0.01)
-        case _:
-            if export.export_class_type == 'BlueprintGeneratedClass':
-                export.ReadProperties(True, False)
+        case 'BlueprintGeneratedClass':
+            export.ReadProperties(True, False)
 
-                bp_obj = SetupObject(bpy.context, export.object_name)
-                TryApplyRootComponent(export, bp_obj)
-                root_comp = export.properties.TryGetValue('RootComponent')
-                if root_comp: root_comp.bl_obj = bp_obj
+            bp_obj = SetupObject(bpy.context, export.object_name)
+            TryApplyRootComponent(export, bp_obj)
+            root_comp = export.properties.TryGetValue('RootComponent')
+            if root_comp: root_comp.bl_obj = bp_obj
 
-                bp_comps = export.properties.TryGetValue('BlueprintCreatedComponents')
-                if bp_comps:
-                    if not hasattr(export.asset, 'import_cache'): export.asset.import_cache = {}
+            bp_comps = export.properties.TryGetValue('BlueprintCreatedComponents')
+            if bp_comps:
+                if not hasattr(export.asset, 'import_cache'): export.asset.import_cache = {}
 
-                    bp_path = export.export_class.import_ref.object_name
-                    if bp_path.startswith("/Engine/"): return
-                    bp_asset = export.asset.import_cache.get(bp_path)
-                    if not bp_asset:
-                        export.asset.import_cache[bp_path] = bp_asset = UAsset(export.asset.ToProjectPath(bp_path), uproject=export.asset.uproject)
-                        bp_asset.Read(False)
-                        bp_asset.name2exp = {}
-                        for exp in bp_asset.exports: bp_asset.name2exp[exp.object_name] = exp
-                    
-                    for comp in bp_comps:
-                        child_export = comp.value
-                        #ProcessUMapExport(child_export) # TODO? Can't, need to partly process gend_exp & child_export
-                        if child_export.export_class_type == 'StaticMeshComponent':
-                            gend_exp = bp_asset.name2exp.get(f"{child_export.object_name}_GEN_VARIABLE")
-                            if gend_exp:
-                                gend_exp.ReadProperties()
+                bp_path = export.export_class.import_ref.object_name
+                if bp_path.startswith("/Engine/"): return
+                bp_asset = export.asset.import_cache.get(bp_path)
+                if not bp_asset:
+                    export.asset.import_cache[bp_path] = bp_asset = UAsset(export.asset.ToProjectPath(bp_path), uproject=export.asset.uproject)
+                    bp_asset.Read(False)
+                    bp_asset.name2exp = {}
+                    for exp in bp_asset.exports: bp_asset.name2exp[exp.object_name] = exp
+                
+                for comp in bp_comps:
+                    child_export = comp.value
+                    #ProcessUMapExport(child_export) # TODO? Can't, need to partly process gend_exp & child_export
+                    if child_export.export_class_type == 'StaticMeshComponent':
+                        gend_exp = bp_asset.name2exp.get(f"{child_export.object_name}_GEN_VARIABLE")
+                        if gend_exp:
+                            gend_exp.ReadProperties()
 
-                                mesh = TryGetStaticMesh(gend_exp, import_materials) if import_meshes else None
-                                child_export.bl_obj = obj = SetupObject(bpy.context, child_export.object_name, mesh)
+                            mesh = TryGetStaticMesh(gend_exp, import_materials) if import_meshes else None
+                            child_export.bl_obj = obj = SetupObject(bpy.context, child_export.object_name, mesh)
 
-                                attach = child_export.properties.TryGetValue('AttachParent') # TODO: unify?
-                                if attach:
-                                    assert hasattr(attach, 'bl_obj')
-                                    obj.parent = attach.bl_obj
+                            attach = child_export.properties.TryGetValue('AttachParent') # TODO: unify?
+                            if attach:
+                                assert hasattr(attach, 'bl_obj')
+                                obj.parent = attach.bl_obj
 
-                                Transform(gend_exp, obj)
-                return
+                            Transform(gend_exp, obj)
 def LoadUMap(filepath, import_meshes=True, import_materials=True, import_lights_point=True, import_lights_spot=True, import_cubemaps=True, 
              force_shadows=False, light_intensity=1, light_angle_coef=1):
     t0 = time.time()

@@ -18,7 +18,15 @@ def uint16_to_float(value:c_uint16):
     return struct.unpack('<f', struct.pack('<I', (sign << 31) | (exp << 23) | (mant << 13)))[0]
 
 class FApexClothPhysToRenderVertData(PrintableStruct): _fields_ = ( ('pos_bary_d', FVector4), ('normal_bary_d', FVector4), ('tang_bary_d', FVector4), ('simul_mesh_vert_inds', c_int16 * 4), ('pad', c_int32 * 2) )
-class FPackedNormal(PrintableStruct): _fields_ = ( ('packed', c_uint32), )
+class FPackedNormal(PrintableStruct):
+    _fields_ = ( ('packed', c_uint32), )
+    def Unpack(self):
+        # TODO: Handle 4.20: ^ 0b10000000100000001000000010000000 # offset by 128
+        return ( # Y, X, Z
+            ((self.packed >> 8 ) & 0xFF) / 127.5 - 1,
+            ( self.packed        & 0xFF) / 127.5 - 1,
+            ((self.packed >> 16) & 0xFF) / 127.5 - 1
+        )
 class FMeshUVHalf(PrintableStruct):
     _fields_ = ( ('u', c_uint16), ('v', c_uint16) )
     def ToFloat2(self): return (uint16_to_float(self.u), 1 - uint16_to_float(self.v))
@@ -240,6 +248,7 @@ def ImportSkeletalMesh(self:Export, import_materials=True, o=None):
     if asset.summary.version_ue4 >= 310: # VER_UE4_REFERENCE_SKELETON_REFACTOR
         for i in range(f.ReadInt32()):
             key, value = ( f.ReadFName(asset.names), f.ReadInt32() )
+            print(f"{value} {key}")
             index_to_name[value] = key
     else:
         for i in range(len(ref_bone_info)): index_to_name[i] = ref_bone_info[i][0]
@@ -267,9 +276,8 @@ def ImportSkeletalMesh(self:Export, import_materials=True, o=None):
                 strip_server = sect_strip_flags.StripForServer()
                 i_mat = f.ReadInt16()
                 if v_skel < 1: i_chunk = f.ReadInt16() # CombineSectionWithChunk
-                if not strip_server: 
-                    i_base = f.ReadInt32()
-                    tri_count = f.ReadInt32()
+                if not strip_server:
+                    i_base, tri_count = (f.ReadInt32(), f.ReadInt32())
                     sections.append((i_mat, i_base, tri_count))
                 if v_skel < 13: tri_sorting = f.ReadUInt8() # RemoveTriangleSorting
                 if asset.summary.version_ue4 >= 254: # VER_UE4_APEX_CLOTH
@@ -289,7 +297,9 @@ def ImportSkeletalMesh(self:Export, import_materials=True, o=None):
             if v_skel < 12: indices = ReadFMultisizeIndexContainer(f, asset.summary) # SplitModelAndRenderData
             else: indices = f.ReadArray(c_uint32)
             
-            active_bone_indices = f.ReadArray(c_int16)
+            active_bone_indices = f.ReadArray(c_int16) # Bones with vertices
+
+            assert not (asset.summary.compatible_version.major >= 4 and asset.summary.compatible_version.minor >= 20), "Handle packed normals"
 
             if v_skel < 1: # CombineSectionWithChunk
                 # TArray<FSkelMeshChunk4> Chunks
@@ -327,6 +337,8 @@ def ImportSkeletalMesh(self:Export, import_materials=True, o=None):
             if asset.summary.version_ue4 >= 152: mesh_to_import_vert_map, max_import_vert_i = (f.ReadArray(c_int32), f.ReadInt32()) # VER_UE4_ADD_SKELMESH_MESHTOIMPORTVERTEXMAP
             
             vert_weights = []
+            spl_norms = []
+
             if not lod_strip_flags.StripForServer(): # geometry TODO: var?
                 uv_c = f.ReadInt32()
 
@@ -340,6 +352,7 @@ def ImportSkeletalMesh(self:Export, import_materials=True, o=None):
                     uv_c, float_uvs = (f.ReadInt32(), f.ReadBool32())
                     assert uv_c > 0 and uv_c < 32
                     if asset.summary.version_ue4 >= 334 and v_skel < 7: extra_bone_influences = f.ReadBool32() # VER_UE4_SUPPORT_GPUSKINNING_8_BONE_INFLUENCES & UseSeparateSkinWeightBuffer
+                    else: extra_bone_influences = False
                     mesh_extension, mesh_origin = (f.ReadStructure(FVector), f.ReadStructure(FVector))
                     skel_infl_c = 8 if extra_bone_influences else 4
                     i_vert = 0
@@ -347,9 +360,10 @@ def ImportSkeletalMesh(self:Export, import_materials=True, o=None):
                     vert_type = FVector2D if float_uvs else FMeshUVHalf
                     el_size = f.ReadInt32() # ReadBulkArray
                     for i in range(f.ReadInt32()):
-                        n_packed_x, n_packed_z = (f.ReadStructure(FPackedNormal), f.ReadStructure(FPackedNormal))
+                        n_x, n_z = (f.ReadStructure(FPackedNormal).Unpack(), f.ReadStructure(FPackedNormal).Unpack())
+
                         if v_skel < 7: # UseSeparateSkinWeightBuffer, FSkinWeightInfo
-                            assert skel_infl_c == 4
+                            assert skel_infl_c <= 4
                             bone_indices = f.ReadStructure(c_ubyte * skel_infl_c)
                             bone_weights = f.ReadStructure(c_ubyte * skel_infl_c)
 
@@ -359,7 +373,8 @@ def ImportSkeletalMesh(self:Export, import_materials=True, o=None):
                         uvs = f.ReadStructure(vert_type * uv_c)
                         ue_uvs.append(uvs)
 
-                        bmsh.verts.new(Vector((pos.y, pos.x, pos.z)))
+                        vert = bmsh.verts.new(Vector((pos.y, pos.x, pos.z)))
+                        vert.normal = n_z
                         i_vert += 1
                     
                     if v_skel >= 7: # UseSeparateSkinWeightBuffer
@@ -375,6 +390,14 @@ def ImportSkeletalMesh(self:Export, import_materials=True, o=None):
                     bmsh.verts[indices[i+1]],
                     bmsh.verts[indices[i+2]]
                 ))
+
+                n1 = bmsh.verts[indices[i+0]].normal
+                n2 = bmsh.verts[indices[i+1]].normal
+                n3 = bmsh.verts[indices[i+2]].normal
+                spl_norms.append(Vector((n1.y, n1.x, n1.z)))
+                spl_norms.append(Vector((n2.y, n2.x, n2.z)))
+                spl_norms.append(Vector((n3.y, n3.x, n3.z)))
+
                 loops = face.loops
                 for i_uv in range(uv_c):
                     loops[0][mdl_uvs[i_uv]].uv = ue_uvs[indices[i+0]][i_uv].ToFloat2()
@@ -388,6 +411,8 @@ def ImportSkeletalMesh(self:Export, import_materials=True, o=None):
                     bmsh.faces[i_tri].material_index = i_mat
 
             bmsh.to_mesh(mesh)
+            #mesh.normals_split_custom_set(spl_norms)
+            mesh.use_auto_smooth = True
             i_vert = 0
             for bone_indices, bone_weights in vert_weights:
                 for i_w in range(skel_infl_c):
@@ -457,8 +482,8 @@ if __name__ != "umesh":
     #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\VehicleVarietyPack\Meshes\SM_Truck_Box.uasset"
     #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\ConstructionMachines\WheelLoader\SM_WheelLoader.uasset"
     #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\FPS_Weapon_Bundle\Weapons\Meshes\Accessories\SM_Scope_25x56_X.uasset"
-    #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\FPS_Weapon_Bundle\Weapons\Meshes\KA74U\SK_KA74U_X.uasset"
-    filepath = r"F:\Projects\Unreal Projects\Assets\Content\FPS_Weapon_Bundle\Weapons\Meshes\KA74U\SK_KA74U_X.uasset"
+    filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\FPS_Weapon_Bundle\Weapons\Meshes\KA74U\SK_KA74U_X.uasset"
+    #filepath = r"F:\Projects\Unreal Projects\Assets\Content\FPS_Weapon_Bundle\Weapons\Meshes\KA74U\SK_KA74U_X.uasset"
 
     ImportUMeshAsObject(filepath)
 
