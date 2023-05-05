@@ -1,7 +1,7 @@
 bl_info = {
     "name" : "Unreal Engine 4",
     "author" : "Waffle1434",
-    "description" : "Import UE4 static meshes, materials, & blueprints.",
+    "description" : "Import UE4 meshes, materials, & maps.",
     "blender" : (2, 80, 0),
     "version" : (0, 0, 1),
     "location" : "",

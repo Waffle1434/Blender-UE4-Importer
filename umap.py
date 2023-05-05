@@ -9,7 +9,7 @@ if cur_dir not in sys.path: sys.path.append(cur_dir)
 import uasset, umat, umesh, register_helper
 from uasset import UAsset, Import, Export, Vector, Euler, FColor
 from umat import TryGetUMaterialImport
-from umesh import ImportStaticMeshUAsset
+from umesh import ImportMeshUAsset
 
 hide_noncasting = False
 deg2rad = math.radians(1)
@@ -39,18 +39,18 @@ def TryApplyRootComponent(export:Export, obj, pitch_offset=0, scale=1):
         Transform(root_exp, obj, pitch_offset, scale)
         return True
     return False
-def TryGetStaticMesh(static_mesh_comp:Export, import_materials=True):
+def TryGetMesh(static_mesh_comp:Export, m_type, import_materials=True):
     mesh = None
-    static_mesh = static_mesh_comp.properties.TryGetValue('StaticMesh')
-    if static_mesh:
-        mesh_name = static_mesh.object_name
+    mesh_prop = static_mesh_comp.properties.TryGetValue(m_type)
+    if mesh_prop:
+        mesh_name = mesh_prop.object_name
         mesh = bpy.data.meshes.get(mesh_name)
         if not mesh or not mesh.get('UAsset'):
-            mesh_import = static_mesh.import_ref
+            mesh_import = mesh_prop.import_ref
             if mesh_import:
                 mesh_path = static_mesh_comp.asset.ToProjectPath(mesh_import.object_name)
-                mesh = ImportStaticMeshUAsset(mesh_path, static_mesh_comp.asset.uproject, import_materials)
-                if not mesh: print(f"Failed to get Static Mesh \"{mesh_path}\"")
+                mesh = ImportMeshUAsset(mesh_path, static_mesh_comp.asset.uproject, import_materials)
+                if not mesh: print(f"Failed to get Mesh \"{mesh_path}\"")
         if import_materials:
             mat_overrides:list[Import] = static_mesh_comp.properties.TryGetValue('OverrideMaterials')
             if mat_overrides:
@@ -71,10 +71,16 @@ def ProcessUMapExport(export:Export, import_meshes=True, import_materials=True, 
     match export.export_class_type:
         case 'StaticMeshActor':
             export.ReadProperties(True, False)
-            static_mesh_comp = export.properties.TryGetValue('StaticMeshComponent') if import_meshes else None
-            mesh = TryGetStaticMesh(static_mesh_comp, import_materials) if static_mesh_comp else None
-            
+            mesh_comp = export.properties.TryGetValue('StaticMeshComponent') if import_meshes else None
+            mesh = TryGetMesh(mesh_comp, 'StaticMesh', import_materials) if mesh_comp else None
             obj = SetupObject(bpy.context, export.object_name, mesh)
+            TryApplyRootComponent(export, obj)
+        case 'SkeletalMeshActor':
+            export.ReadProperties(True, False)
+            mesh_comp = export.properties.TryGetValue('SkeletalMeshComponent') if import_meshes else None
+            mesh = TryGetMesh(mesh_comp, 'SkeletalMesh', import_materials) if mesh_comp else None
+            obj = bpy.data.objects[mesh.name]
+            #obj = SetupObject(bpy.context, export.object_name, mesh)
             TryApplyRootComponent(export, obj)
         case 'PointLight' | 'SpotLight' | 'DirectionalLight':
             rot_off = -90
@@ -160,7 +166,7 @@ def ProcessUMapExport(export:Export, import_meshes=True, import_materials=True, 
                         if gend_exp:
                             gend_exp.ReadProperties()
 
-                            mesh = TryGetStaticMesh(gend_exp, import_materials) if import_meshes else None
+                            mesh = TryGetMesh(gend_exp, 'StaticMesh', import_materials) if import_meshes else None
                             child_export.bl_obj = obj = SetupObject(bpy.context, child_export.object_name, mesh)
 
                             attach = child_export.properties.TryGetValue('AttachParent') # TODO: unify?
@@ -169,6 +175,8 @@ def ProcessUMapExport(export:Export, import_meshes=True, import_materials=True, 
                                 obj.parent = attach.bl_obj
 
                             Transform(gend_exp, obj)
+        case _:
+            print(f"Skipping \"{export.export_class_type}\"")
 def LoadUMap(filepath, import_meshes=True, import_materials=True, import_lights_point=True, import_lights_spot=True, import_cubemaps=True, 
              force_shadows=False, light_intensity=1, light_angle_coef=1):
     t0 = time.time()
@@ -239,4 +247,6 @@ if __name__ != "umap":
     #LoadUMap(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary_2.umap", True, True)
     #LoadUMap(r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary.umap", True, True)
     #LoadUMap(r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary_427.umap", True, True)
+    LoadUMap(r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\FPS_Weapon_Bundle\Maps\Weapons_Showcase.umap", True, True)
+    
     print("Done")

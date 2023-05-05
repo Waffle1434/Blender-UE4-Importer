@@ -1,6 +1,6 @@
 import os, io, sys, math, uuid, bpy, bmesh, importlib, time, struct
 from ctypes import *
-from mathutils import Vector
+from mathutils import Vector, Matrix
 from bpy.props import *
 from bpy_extras.io_utils import ImportHelper
 
@@ -133,12 +133,16 @@ def ReadMeshBulkData(self:Export, asset:UAsset, f:uasset.ByteStream): # FByteBul
         bmsh.to_mesh(mesh)
         mesh.normals_split_custom_set(spl_norms)
         mesh.use_auto_smooth = True
-        mesh.transform(Euler((0,0,math.radians(0))).to_matrix().to_4x4()*0.01)
+        mesh.transform(Matrix.Identity(4) * 0.01)
         mesh["UAsset"] = self.asset.f.byte_stream.name
         # TODO: flip_normals() faster?
 
         f.Seek(p)
         return mesh
+def ReadFSkelMeshVertexBase(f:uasset.ByteStream, v_ren):
+    pos = f.ReadStructure(FVector)
+    if v_ren < 26: packed_normals = f.ReadStructure(FPackedNormal * 3) # IncreaseNormalPrecision
+    else: new_nx, new_ny, new_nz = (f.ReadStructure(FVector), f.ReadStructure(FVector), f.ReadStructure(FVector4))
 def ImportStaticMesh(self:Export, import_materials=True, log=True):
     t0 = time.time()
     asset = self.asset
@@ -253,7 +257,7 @@ def ImportSkeletalMesh(self:Export, import_materials=True, o=None):
     else:
         for i in range(len(ref_bone_info)): index_to_name[i] = ref_bone_info[i][0]
 
-    mesh = bpy.data.meshes.new(self.object_name)
+    mesh = bpy.data.meshes.new(self.object_name) # TODO: oy vey, static mesh doesn't have to create an object
     mesh.name = self.object_name
     o = bpy.data.objects.new(mesh.name, mesh)
     bpy.context.collection.objects.link(o)
@@ -310,17 +314,15 @@ def ImportSkeletalMesh(self:Export, import_materials=True, o=None):
                         skel_influences = 8 if asset.summary.version_ue4 >= 332 else 4 # VER_UE4_SUPPORT_8_BONE_INFLUENCES_SKELETAL_MESHES
                         # FRigidVertex4 rigid_verts
                         for i in range(f.ReadInt32()):
-                            # FSkelMeshVertexBase
-                            pos = f.ReadStructure(FVector)
-                            if v_ren < 26: packed_normals = f.ReadStructure(FPackedNormal * 3) # IncreaseNormalPrecision
-                            else: new_nx, new_ny, new_nz = (f.ReadStructure(FVector), f.ReadStructure(FVector), f.ReadStructure(FVector4))
-                            
+                            ReadFSkelMeshVertexBase(f, v_ren)
                             uvs, color, i_bone = (f.ReadStructure(FVector2D * 4), f.ReadStructure(FColor), f.ReadUInt8())
                         # FSoftVertex4 soft_verts
                         for i in range(f.ReadInt32()):
-                            raise # TODO: soft_verts
+                            ReadFSkelMeshVertexBase(f, v_ren)
                             uvs, color = (f.ReadStructure(FVector2D * 4), f.ReadStructure(FColor))
-                            raise # TODO: Ar << V.Infs;
+                            assert skel_influences > 4 and skel_influences <= 8
+                            bone_indices = f.ReadStructure(c_ubyte * skel_influences)
+                            bone_weights = f.ReadStructure(c_ubyte * skel_influences)
                     bone_map, rigid_vert_c, soft_vert_c, max_bone_influences = (f.ReadArray(c_uint16), f.ReadInt32(), f.ReadInt32(), f.ReadInt32())
                     if asset.summary.version_ue4 >= 254: # VER_UE4_APEX_CLOTH
                         cloth_mappings, physical_mesh_verts, physical_mesh_norms = (f.ReadArray(FApexClothPhysToRenderVertData), f.ReadArray(FVector), f.ReadArray(FVector))
@@ -413,6 +415,10 @@ def ImportSkeletalMesh(self:Export, import_materials=True, o=None):
             bmsh.to_mesh(mesh)
             #mesh.normals_split_custom_set(spl_norms)
             mesh.use_auto_smooth = True
+            mesh.transform(Matrix.Identity(4) * 0.01)
+
+            for poly in mesh.polygons: poly.use_smooth = True
+
             i_vert = 0
             for bone_indices, bone_weights in vert_weights:
                 for i_w in range(skel_infl_c):
@@ -425,24 +431,24 @@ def ImportSkeletalMesh(self:Export, import_materials=True, o=None):
 
             return mesh
     else: raise # TODO
-def ImportStaticMeshUAsset(filepath:str, uproject=None, import_materials=True, log=False, o=None):
+def ImportMeshUAsset(filepath:str, uproject=None, import_materials=True, log=False, o=None):
     asset = UAsset(filepath, uproject=uproject)
     asset.Read(False)
     for export in asset.exports:
         match export.export_class_type:
             case 'StaticMesh': return ImportStaticMesh(export, import_materials, log)
             case 'SkeletalMesh': return ImportSkeletalMesh(export, import_materials, o)
-    if log: print(f"\"{filepath}\" Static Mesh Export Not Found")
+    if log: print(f"\"{filepath}\" Mesh Export Not Found")
     return None
 def ImportUMeshAsObject(filepath:str, uproject=None, materials=True):
     o = bpy.data.objects.new("tmp", None)
     bpy.context.collection.objects.link(o)
-    mesh = ImportStaticMeshUAsset(filepath, uproject, materials, True, o)
+    mesh = ImportMeshUAsset(filepath, uproject, materials, True, o)
     o.name = mesh.name
 
-def menu_import_umesh(self, context): self.layout.operator(ImportUMesh.bl_idname, text="UE Static Mesh (.uasset)")
+def menu_import_umesh(self, context): self.layout.operator(ImportUMesh.bl_idname, text="UE Mesh (.uasset)")
 class ImportUMesh(bpy.types.Operator, ImportHelper):
-    """Import Unreal Engine Static Mesh File"""
+    """Import Unreal Engine Mesh File"""
     bl_idname    = "import.umesh"
     bl_label     = "Import"
     filename_ext = ".uasset"
@@ -482,8 +488,9 @@ if __name__ != "umesh":
     #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\VehicleVarietyPack\Meshes\SM_Truck_Box.uasset"
     #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\ConstructionMachines\WheelLoader\SM_WheelLoader.uasset"
     #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\FPS_Weapon_Bundle\Weapons\Meshes\Accessories\SM_Scope_25x56_X.uasset"
-    filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\FPS_Weapon_Bundle\Weapons\Meshes\KA74U\SK_KA74U_X.uasset"
+    #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\FPS_Weapon_Bundle\Weapons\Meshes\KA74U\SK_KA74U_X.uasset"
     #filepath = r"F:\Projects\Unreal Projects\Assets\Content\FPS_Weapon_Bundle\Weapons\Meshes\KA74U\SK_KA74U_X.uasset"
+    filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\FPS_Weapon_Bundle\Weapons\Meshes\SMG11\SK_SMG11_Nostock_Y.uasset"
 
     ImportUMeshAsObject(filepath)
 
