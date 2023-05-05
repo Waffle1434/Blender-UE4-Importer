@@ -441,10 +441,9 @@ def ImportMeshUAsset(filepath:str, uproject=None, import_materials=True, log=Fal
     if log: print(f"\"{filepath}\" Mesh Export Not Found")
     return None
 def ImportUMeshAsObject(filepath:str, uproject=None, materials=True):
-    o = bpy.data.objects.new("tmp", None)
+    mesh = ImportMeshUAsset(filepath, uproject, materials, True)
+    o = bpy.data.objects.new(mesh.name, mesh)
     bpy.context.collection.objects.link(o)
-    mesh = ImportMeshUAsset(filepath, uproject, materials, True, o)
-    o.name = mesh.name
 
 def menu_import_umesh(self, context): self.layout.operator(ImportUMesh.bl_idname, text="UE Mesh (.uasset)")
 class ImportUMesh(bpy.types.Operator, ImportHelper):
@@ -490,7 +489,8 @@ if __name__ != "umesh":
     #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\FPS_Weapon_Bundle\Weapons\Meshes\Accessories\SM_Scope_25x56_X.uasset"
     #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\FPS_Weapon_Bundle\Weapons\Meshes\KA74U\SK_KA74U_X.uasset"
     #filepath = r"F:\Projects\Unreal Projects\Assets\Content\FPS_Weapon_Bundle\Weapons\Meshes\KA74U\SK_KA74U_X.uasset"
-    filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\FPS_Weapon_Bundle\Weapons\Meshes\SMG11\SK_SMG11_Nostock_Y.uasset"
+    #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\FPS_Weapon_Bundle\Weapons\Meshes\SMG11\SK_SMG11_Nostock_Y.uasset"
+    filepath = "C:\\Users\\jdeacutis\\Documents\\Unreal Projects\\Assets\\Content\\StarterBundle/ModularSci_Comm/Meshes/SM_Windows_A_Glass.uasset"
 
     ImportUMeshAsObject(filepath)
 

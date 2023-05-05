@@ -1,4 +1,5 @@
 import bpy, os, sys, math, importlib, time, zlib
+from dataclasses import dataclass
 from mathutils import *
 from bpy.props import *
 from bpy_extras.io_utils import ImportHelper
@@ -7,19 +8,32 @@ cur_dir = os.path.dirname(__file__)
 if cur_dir not in sys.path: sys.path.append(cur_dir)
 
 import uasset, umat, umesh, register_helper
-from uasset import UAsset, Import, Export, Vector, Euler, FColor
+from uasset import UAsset, Import, Export, FVector, FColor
 from umat import TryGetUMaterialImport
 from umesh import ImportMeshUAsset
 
 hide_noncasting = False
 deg2rad = math.radians(1)
 
+@dataclass
+class UMapImportSettings():
+    meshes:           bool  = True
+    materials:        bool  = True
+    cameras:          bool  = True
+    lights_point:     bool  = False
+    lights_spot:      bool  = True
+    lights_dir:       bool  = True
+    cubemaps:         bool  = True
+    force_shadows:    bool  = False
+    light_intensity:  float = 1
+    light_angle_coef: float = 1
+
 def SetupObject(context, name, data=None):
     obj = bpy.data.objects.new(name, data)
     obj.rotation_mode = 'YXZ'
     context.collection.objects.link(obj)
     return obj
-def Transform(export:Export, obj, pitch_offset=0, scale=1):
+def Transform(export:Export, obj, pitch_offset=0, def_scale=FVector(1,1,1), scale=1):
     props = export.properties
 
     # Unreal: X+ Forward, Y+ Right, Z+ Up     Blender: X+ Right, Y+ Forward, Z+ Up
@@ -30,13 +44,13 @@ def Transform(export:Export, obj, pitch_offset=0, scale=1):
     rel_rot = props.TryGetValue('RelativeRotation')
     if rel_rot: obj.rotation_euler = Euler(((rel_rot.x+pitch_offset)*deg2rad, rel_rot.z*deg2rad, -rel_rot.y*deg2rad))
 
-    rel_scale = props.TryGetValue('RelativeScale3D')
-    if rel_scale: obj.scale = Vector((rel_scale.y,rel_scale.x,rel_scale.z)) * scale
-def TryApplyRootComponent(export:Export, obj, pitch_offset=0, scale=1):
+    rel_scale = props.TryGetValue('RelativeScale3D', def_scale)
+    obj.scale = Vector((rel_scale.y,rel_scale.x,rel_scale.z)) * scale
+def TryApplyRootComponent(export:Export, obj, pitch_offset=0, def_scale=FVector(1,1,1), scale=1):
     root_exp:Export = export.properties.TryGetValue('RootComponent')
     if root_exp:
         root_exp.ReadProperties(False, False)
-        Transform(root_exp, obj, pitch_offset, scale)
+        Transform(root_exp, obj, pitch_offset, def_scale, scale)
         return True
     return False
 def TryGetMesh(static_mesh_comp:Export, m_type, import_materials=True):
@@ -62,38 +76,42 @@ def TryGetMesh(static_mesh_comp:Export, m_type, import_materials=True):
                 else:
                     mesh = mesh.copy()
                     mesh.name = override_mesh_name
-                    for i in range(len(mat_overrides)):
-                        mat_override = mat_overrides[i].value
-                        if mat_override: mesh.materials[i] = TryGetUMaterialImport(mat_override, mesh)
+                    c_override = len(mat_overrides)
+                    if c_override > len(mesh.materials): print(f"Error: More overrides ({c_override}) than materials ({len(mesh.materials)})")
+                    else:
+                        for i in range(c_override):
+                            mat_override = mat_overrides[i].value
+                            if mat_override: mesh.materials[i] = TryGetUMaterialImport(mat_override, mesh)
     return mesh
-def ProcessUMapExport(export:Export, import_meshes=True, import_materials=True, import_lights_point=True, import_lights_spot=True, import_cubemaps=True, 
-                      force_shadows=False, light_intensity=1, light_angle_coef=1):
+def ProcessUMapExport(export:Export, cfg:UMapImportSettings):
     match export.export_class_type:
         case 'StaticMeshActor':
             export.ReadProperties(True, False)
-            mesh_comp = export.properties.TryGetValue('StaticMeshComponent') if import_meshes else None
-            mesh = TryGetMesh(mesh_comp, 'StaticMesh', import_materials) if mesh_comp else None
+            mesh_comp = export.properties.TryGetValue('StaticMeshComponent') if cfg.meshes else None
+            mesh = TryGetMesh(mesh_comp, 'StaticMesh', cfg.materials) if mesh_comp else None
             obj = SetupObject(bpy.context, export.object_name, mesh)
             TryApplyRootComponent(export, obj)
         case 'SkeletalMeshActor':
             export.ReadProperties(True, False)
-            mesh_comp = export.properties.TryGetValue('SkeletalMeshComponent') if import_meshes else None
-            mesh = TryGetMesh(mesh_comp, 'SkeletalMesh', import_materials) if mesh_comp else None
+            mesh_comp = export.properties.TryGetValue('SkeletalMeshComponent') if cfg.meshes else None
+            mesh = TryGetMesh(mesh_comp, 'SkeletalMesh', cfg.materials) if mesh_comp else None
             obj = bpy.data.objects[mesh.name]
             #obj = SetupObject(bpy.context, export.object_name, mesh)
             TryApplyRootComponent(export, obj)
         case 'PointLight' | 'SpotLight' | 'DirectionalLight':
             rot_off = -90
+            light_intensity = cfg.light_intensity
             match export.export_class_type:
                 case 'PointLight':
+                    if not cfg.lights_point: return
                     light_type = 'POINT'
-                    if not import_lights_point: return
                 case 'SpotLight':
+                    if not cfg.lights_spot: return
                     light_type = 'SPOT'
-                    if not import_lights_spot: return
                 case 'DirectionalLight':
+                    if not cfg.lights_dir: return
                     light_type = 'SUN'
-                    light_intensity = 100
+                    light_intensity *= 100
                     rot_off = 0
 
             export.ReadProperties(True, False)
@@ -111,17 +129,17 @@ def ProcessUMapExport(export:Export, import_meshes=True, import_materials=True, 
                 color:FColor = light_props.TryGetValue('LightColor', FColor(255,255,255,255))
                 light.color = Color((color.r,color.g,color.b)) / 255.0
                 cast = light_props.TryGetValue('CastShadows', True)
-                light.use_shadow = cast or force_shadows
+                light.use_shadow = cast or cfg.force_shadows
                 if not cast and hide_noncasting: light_obj.hide_viewport = light_obj.hide_render = True
                 light.shadow_soft_size = light_props.TryGetValue('SourceRadius', 0.05)
 
                 if light_type == 'SPOT':
                     outer_angle = light_props.TryGetValue('OuterConeAngle', 44)
                     inner_angle = light_props.TryGetValue('InnerConeAngle', 0)
-                    light.spot_size = 2 * light_angle_coef * outer_angle * deg2rad
+                    light.spot_size = 2 * cfg.light_angle_coef * outer_angle * deg2rad
                     light.spot_blend = 1 - (inner_angle / outer_angle)
         case 'BoxReflectionCapture':
-            if not import_cubemaps: return
+            if not cfg.cubemaps: return
             export.ReadProperties(False, False)
 
             probe = bpy.data.lightprobes.new(export.object_name, 'CUBE')
@@ -136,7 +154,7 @@ def ProcessUMapExport(export:Export, import_meshes=True, import_materials=True, 
                     if box_ext: probe.falloff = 1 - max(box_ext.x, max(box_ext.y, box_ext.z))
 
             obj = SetupObject(bpy.context, export.object_name, probe)
-            TryApplyRootComponent(export, obj, scale=0.01)
+            TryApplyRootComponent(export, obj, def_scale=FVector(1000,1000,400), scale=0.01)
         case 'BlueprintGeneratedClass':
             export.ReadProperties(True, False)
 
@@ -166,7 +184,7 @@ def ProcessUMapExport(export:Export, import_meshes=True, import_materials=True, 
                         if gend_exp:
                             gend_exp.ReadProperties()
 
-                            mesh = TryGetMesh(gend_exp, 'StaticMesh', import_materials) if import_meshes else None
+                            mesh = TryGetMesh(gend_exp, 'StaticMesh', cfg.materials) if cfg.meshes else None
                             child_export.bl_obj = obj = SetupObject(bpy.context, child_export.object_name, mesh)
 
                             attach = child_export.properties.TryGetValue('AttachParent') # TODO: unify?
@@ -175,10 +193,15 @@ def ProcessUMapExport(export:Export, import_meshes=True, import_materials=True, 
                                 obj.parent = attach.bl_obj
 
                             Transform(gend_exp, obj)
-        case _:
-            print(f"Skipping \"{export.export_class_type}\"")
-def LoadUMap(filepath, import_meshes=True, import_materials=True, import_lights_point=True, import_lights_spot=True, import_cubemaps=True, 
-             force_shadows=False, light_intensity=1, light_angle_coef=1):
+        case 'CameraActor':
+            if cfg.cameras:
+                export.ReadProperties(True, False)
+                cam = bpy.data.cameras.new(name=export.object_name)
+                cam.display_size = 0.5
+                obj = SetupObject(bpy.context, export.object_name, cam)
+                TryApplyRootComponent(export, obj, 90)
+        case _: print(f"Skipping \"{export.export_class_type}\"")
+def LoadUMap(filepath, cfg=UMapImportSettings()):
     t0 = time.time()
 
     obj_count = len(bpy.data.objects)
@@ -190,7 +213,7 @@ def LoadUMap(filepath, import_meshes=True, import_materials=True, import_lights_
         bpy.context.window_manager.progress_begin(0, len(asset.exports))
         for i, export in enumerate(asset.exports):
             #export.ReadProperties(False, False)
-            ProcessUMapExport(export, import_meshes, import_materials, import_lights_point, import_lights_spot, import_cubemaps, force_shadows, light_intensity, light_angle_coef)
+            ProcessUMapExport(export, cfg)
             bpy.context.window_manager.progress_update(i)
         bpy.context.window_manager.progress_end()
     if hasattr(asset, 'import_cache'):
@@ -209,19 +232,23 @@ class ImportUMap(bpy.types.Operator, ImportHelper):
     files:       CollectionProperty(type=bpy.types.OperatorFileListElement, options={'HIDDEN','SKIP_SAVE'})
     directory:   StringProperty(options={'HIDDEN'})
 
-    meshes:           BoolProperty(name="Meshes",        default=True)
-    materials:        BoolProperty(name="Materials",     default=True, description="Import Mesh Materials (this is usually the slowest part).")
-    lights_point:     BoolProperty(name="Point Lights",  default=False)
-    lights_spot:      BoolProperty(name="Spot Lights",   default=True)
-    cubemaps:         BoolProperty(name="Cubemaps",      default=True)
-    force_shadows:    BoolProperty(name="Force Shadows", default=False, description="Force all lights to cast shadows.")
-    light_intensity:  FloatProperty(name="Light Brightness", default=1,   min=0, description="Optional multiplier for light intensity.")
-    light_angle_coef: FloatProperty(name="Light Angle",      default=1,   min=0, description="Optional multiplier for spotlight angle.")
+    meshes:           BoolProperty(name="Meshes",               default=True)
+    materials:        BoolProperty(name="Materials",            default=True, description="Import Mesh Materials (this is usually the slowest part).")
+    cameras:          BoolProperty(name="Cameras",              default=True)
+    lights_point:     BoolProperty(name="Point Lights",         default=False)
+    lights_spot:      BoolProperty(name="Spot Lights",          default=True)
+    lights_dir:       BoolProperty(name="Directional Lights",   default=True)
+    cubemaps:         BoolProperty(name="Cubemaps",             default=True)
+    force_shadows:    BoolProperty(name="Force Shadows",        default=False, description="Force all lights to cast shadows.")
+    light_intensity:  FloatProperty(name="Light Brightness",    default=1, min=0, description="Optional multiplier for light intensity.")
+    light_angle_coef: FloatProperty(name="Light Angle",         default=1, min=0, description="Optional multiplier for spotlight angle.")
 
     def execute(self, context):
         for file in self.files:
-            if file.name != "": LoadUMap(self.directory + file.name, self.meshes, self.materials, self.lights_point, self.lights_spot, 
-                                         self.cubemaps, self.force_shadows, self.light_intensity, self.light_angle_coef)
+            if file.name != "":
+                cfg = UMapImportSettings(self.meshes, self.materials, self.cameras, self.lights_point, self.lights_spot, self.lights_dir, 
+                                   self.cubemaps, self.force_shadows, self.light_intensity, self.light_angle_coef)
+                LoadUMap(self.directory + file.name, cfg)
         return {'FINISHED'}
 
 reg_classes = ( ImportUMap, )
@@ -242,11 +269,12 @@ if __name__ != "umap":
 
     #sys.settrace(None) # Disable debugging for faster runtime
 
-    #LoadUMap(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary.umap", True, True)
-    #LoadUMap(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Overview.umap", True, True)
-    #LoadUMap(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary_2.umap", True, True)
-    #LoadUMap(r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary.umap", True, True)
-    #LoadUMap(r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary_427.umap", True, True)
-    LoadUMap(r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\FPS_Weapon_Bundle\Maps\Weapons_Showcase.umap", True, True)
+    #LoadUMap(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary.umap")
+    #LoadUMap(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Overview.umap")
+    #LoadUMap(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary_2.umap")
+    #LoadUMap(r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary.umap")
+    #LoadUMap(r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary_427.umap")
+    #LoadUMap(r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\FPS_Weapon_Bundle\Maps\Weapons_Showcase.umap")
+    LoadUMap(r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\StarterBundle\ModularScifiProps\Maps\Promo.umap")
     
     print("Done")
