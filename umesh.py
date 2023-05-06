@@ -41,11 +41,11 @@ class BulkHeader:
         if not (self.flags & 0x10000): self.offset += summary.bulk_data_offset # NoOffsetFixUp
         return self
 
-v_obj_guid = uuid.UUID('E4B068ED-42E9-F494-0BDA-31A241BB462E') # 0xE4B068ED, 0xF49442E9, 0xA231DA0B, 0x2E46BB41
+v_obj_guid     = uuid.UUID('E4B068ED-42E9-F494-0BDA-31A241BB462E') # 0xE4B068ED, 0xF49442E9, 0xA231DA0B, 0x2E46BB41
 v_ent_obj_guid = uuid.UUID('9DFFBCD6-0158-494F-8212-21E288A8923C') # 0x9DFFBCD6, 0x494F0158, 0xE2211282, 0x3C92A888
-v_tang_guid = uuid.UUID('5579F886-4C1F-933A-7B08-BA832FB96163') # 
-v_ren_guid = uuid.UUID('12F88B9F-4AFC-8875-0CD9-7CA629BD3A38') # 0x12F88B9F, 0x88754AFC, 0xA67CD90C, 0x383ABD29
-v_skel_guid = uuid.UUID('D78A4A00-4697-E858-B519-A8BAB4467D48') # 0xD78A4A00, 0xE8584697, 0xBAA819B5, 0x487D46B4
+v_tang_guid    = uuid.UUID('5579F886-4C1F-933A-7B08-BA832FB96163') # 
+v_ren_guid     = uuid.UUID('12F88B9F-4AFC-8875-0CD9-7CA629BD3A38') # 0x12F88B9F, 0x88754AFC, 0xA67CD90C, 0x383ABD29
+v_skel_guid    = uuid.UUID('D78A4A00-4697-E858-B519-A8BAB4467D48') # 0xD78A4A00, 0xE8584697, 0xBAA819B5, 0x487D46B4
 
 def ReadStripFlags(f:uasset.ByteStream, summary:uasset.USummary, min_v = 130) -> FStripDataFlags: return f.ReadStructure(FStripDataFlags) if summary.version_ue4 >= min_v else FStripDataFlags()
 def ReadFMultisizeIndexContainer(f:uasset.ByteStream, summary:uasset.USummary):
