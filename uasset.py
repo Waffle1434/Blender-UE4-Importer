@@ -201,6 +201,7 @@ class Export: #FObjectExport
         assert extras_len >= 0
         if read_extras: self.extras = [x for x in self.asset.f.ReadBytes(extras_len)] if extras_len > 0 else None
 class Properties(dict):
+    def get(self, key:str, default=None) -> UProperty: return super().get(key, default)
     def Read(self, asset:UAsset, header=True, read_children=True):
         while True:
             prop = UProperty()

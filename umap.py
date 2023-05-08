@@ -200,7 +200,7 @@ def ProcessUMapExport(export:Export, cfg:UMapImportSettings):
                 cam.display_size = 0.5
                 obj = SetupObject(bpy.context, export.object_name, cam)
                 TryApplyRootComponent(export, obj, 90)
-        case _: print(f"Skipping \"{export.export_class_type}\"")
+        #case _: print(f"Skipping \"{export.export_class_type}\"")
 def LoadUMap(filepath, cfg=UMapImportSettings()):
     t0 = time.time()
 
@@ -275,6 +275,7 @@ if __name__ != "umap":
     #LoadUMap(r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary.umap")
     #LoadUMap(r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary_427.umap")
     #LoadUMap(r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\FPS_Weapon_Bundle\Maps\Weapons_Showcase.umap")
-    LoadUMap(r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\StarterBundle\ModularScifiProps\Maps\Promo.umap")
+    #LoadUMap(r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\StarterBundle\ModularScifiProps\Maps\Promo.umap")
+    LoadUMap(r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\StarterBundle\ModularScifiProps\Maps\Overview_Props.umap")
     
     print("Done")

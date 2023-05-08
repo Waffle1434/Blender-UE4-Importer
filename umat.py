@@ -8,7 +8,7 @@ from bpy_extras.io_utils import ImportHelper
 cur_dir = os.path.dirname(__file__)
 if cur_dir not in sys.path: sys.path.append(cur_dir)
 import uasset, register_helper
-from uasset import UAsset, Import, Export, Properties
+from uasset import UAsset, Import, Export, Properties, UProperty
 
 umodel_path = cur_dir + r"\umodel.exe"
 mute_ior = True
@@ -61,7 +61,7 @@ class UE2BlenderNodeMapping():
         self.width = width
         self.visible_outputs = visible_outputs
 class NodeData():
-    def __init__(self, export, classname=None, node=None, link_indirect=None, input_remap=None):
+    def __init__(self, export:Export, classname=None, node=None, link_indirect=None, input_remap=None):
         self.export = export
         self.classname = classname if classname else export.export_class_type
         self.node = node
@@ -153,6 +153,7 @@ UE2BlenderNode_dict = {
     'MaterialExpressionWorldPosition'     : UE2BlenderNodeMapping('ShaderNodeNewGeometry', hide=False, width=170, label="Absolute World Position", visible_outputs=('Position',)),
     'MaterialExpressionObjectPositionWS'  : UE2BlenderNodeMapping('ShaderNodeObjectInfo', hide=False, width=None, label="Object Position", visible_outputs=('Location',)),
     'MaterialExpressionCameraPositionWS'  : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='CameraPosition', hide=False, width=None),
+    'MaterialExpressionCameraVectorWS'    : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='CameraVector', hide=False, width=None),
     'MaterialExpressionScreenPosition'    : UE2BlenderNodeMapping('ShaderNodeGroup', subtype='ScreenPosition', hide=False, width=None),
     'MaterialExpressionPixelDepth'        : UE2BlenderNodeMapping('ShaderNodeCameraData', hide=False, width=None, visible_outputs=('View Z Depth',)),
 
@@ -202,7 +203,6 @@ def SetupNode(node_tree, name, mapping:UE2BlenderNodeMapping, node_data) -> bpy.
                 rgb2n.location += Vector((0,30))
                 node_tree.links.new(node.outputs['Color'], rgb2n.inputs['RGB'])
                 rgb_in = rgb2n.outputs['Normal']
-            if mapping.bl_idname == 'ShaderNodeVertexColor': print("TODO: Pick Vertex Color Attribute")
 
             rgba:bpy.types.ShaderNode = node_tree.nodes.new('ShaderNodeGroup')
             rgba.node_tree = bpy.data.node_groups['RGBA']
@@ -226,7 +226,7 @@ def HandleDefaultConstants(mapping, node, params):
                     case 'VECTOR': socket.default_value = (value, value, value)
                     case 'RGBA':   socket.default_value = (value, value, value, 1)
                     case _:        socket.default_value = value
-                        
+
 def CreateNode(exp:Export, node_tree, nodes_data:dict[str,NodeData], graph_data, mesh=None):
     name = exp.object_name
     classname = exp.export_class_type # TODO: inline?
@@ -313,6 +313,15 @@ def CreateNode(exp:Export, node_tree, nodes_data:dict[str,NodeData], graph_data,
                     except:
                         print(f"Failed to use UV{uv_i} from mesh")
                         pass
+            tiling = (params.TryGetValue('UTiling', 1), params.TryGetValue('VTiling', 1))
+            if tiling[0] != 1 or tiling[1] != 1:
+                mult:bpy.types.ShaderNode = node_tree.nodes.new('ShaderNodeVectorMath')
+                mult.operation = 'MULTIPLY'
+                mult.inputs[1].default_value = (tiling[0], tiling[1], 0)
+                mult.width = 100
+                mult.location = node.location + Vector((160,-32))
+                node_tree.links.new(node.outputs[0], mult.inputs[0])
+                node_data.link_indirect = mult.outputs
         case 'MaterialExpressionTextureSampleParameter2D' | 'MaterialExpressionTextureSample':
             tex_imp = params.TryGetValue('Texture')
             if tex_imp:
@@ -324,7 +333,7 @@ def CreateNode(exp:Export, node_tree, nodes_data:dict[str,NodeData], graph_data,
     expr_guid = params.TryGetValue('ExpressionGUID')
     if expr_guid: graph_data.node_guids[expr_guid] = node_data
     return node_data
-def LinkSocket(node_tree, nodes_data:dict[str,NodeData], node_data:NodeData, expr:Import, property, dst_index):
+def LinkSocket(node_tree, nodes_data:dict[str,NodeData], node_data:NodeData, expr:UProperty, property:str, dst_index):
     link_node_exp = expr.value.node if expr.struct_type == 'ExpressionInput' else expr.value
     link_node_data = nodes_data.get(link_node_exp.object_name)
     if link_node_data:
@@ -347,7 +356,7 @@ def LinkSocket(node_tree, nodes_data:dict[str,NodeData], node_data:NodeData, exp
             link = node_tree.links.new(src_socket, dst_socket)
             if mute_fresnel and src_socket.node.bl_idname == 'ShaderNodeFresnel': link.is_muted = True
         else: print(f"FAILED LINK: {node.name}.{property}")
-    else: print(f"Link Failed, Missing Node: {str(link_node_exp.object_name)}")
+    else: print(f"Link Failed, Missing Node: \"{expr.value}\" {str(link_node_exp.object_name)} (\"{os.path.basename(node_data.export.asset.filepath)}\")")
 def LinkSockets(node_tree, nodes_data:dict[str,NodeData], node_data:NodeData):
     mapping = UE2BlenderNode_dict.get(node_data.classname)
     if mapping and mapping.inputs:
