@@ -414,6 +414,12 @@ def ImportNodeGraph(filepath, uproject=None, name=None, mesh=None, log=False): #
                             diff = eval_node.location - comment_node.location
                             if diff.x > 0 and diff.x < comment_node.width and diff.y < 0 and diff.y > -comment_node.height: eval_node.parent = comment_node
 
+                    if params.TryGetValue('ShadingModel', '') == 'MSM_Unlit':
+                        emission = node_tree.nodes.new('ShaderNodeEmission')
+                        emission.location = node.location + Vector((0, 150))
+                        node_tree.links.new(emission.outputs[0], node_tree.nodes['Material Output'].inputs['Surface'])
+                        node_data.input_remap = { 'EmissiveColor':emission.inputs['Color'] }
+
                     match params.TryGetValue('BlendMode'):
                         case 'BLEND_Translucent':
                             mat.blend_method, mat.shadow_method = ('BLEND', 'HASHED')
@@ -427,7 +433,7 @@ def ImportNodeGraph(filepath, uproject=None, name=None, mesh=None, log=False): #
                             additive.node_tree = bpy.data.node_groups['AdditiveSurface']
                             additive.location = node.location + Vector((0, 150))
                             node_tree.links.new(additive.outputs[0], node_tree.nodes['Material Output'].inputs['Surface'])
-                            node_data.input_remap = { 'EmissiveColor':additive.inputs['Emission'] }
+                            node_data.input_remap = { 'EmissiveColor':additive.inputs['Color'] }
                         case _:
                             mat.blend_method = mat.shadow_method = 'OPAQUE'
                     mat.use_backface_culling = not params.TryGetValue('TwoSided', False)
@@ -561,6 +567,7 @@ if __name__ != "umat":
     #filepath = r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Materials\MI_Trim_A_Red2.uasset"
     #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\NewMaterial.uasset"
     #filepath = r"F:\Projects\Unreal Projects\Assets\Content\Test1434.uasset"
-    filepath = r"C:\Program Files\Epic Games\UE_4.27\Engine\Content\EngineMaterials\DefaultMaterial.uasset"
+    #filepath = r"C:\Program Files\Epic Games\UE_4.27\Engine\Content\EngineMaterials\DefaultMaterial.uasset"
+    filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\StarterBundle\ModularScifiProps\Materials\MI_Laptop_Mail.uasset"
     ImportNodeGraph(filepath)
     print("Done")
