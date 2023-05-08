@@ -49,7 +49,7 @@ def Transform(export:Export, obj, pitch_offset=0, def_scale=FVector(1,1,1), scal
 def TryApplyRootComponent(export:Export, obj, pitch_offset=0, def_scale=FVector(1,1,1), scale=1):
     root_exp:Export = export.properties.TryGetValue('RootComponent')
     if root_exp:
-        root_exp.ReadProperties(False, False)
+        root_exp.ReadProperties(False)
         Transform(root_exp, obj, pitch_offset, def_scale, scale)
         return True
     return False
@@ -89,13 +89,13 @@ def ProcessUMapExport(export:Export, cfg:UMapImportSettings):
         case 'Class':
             match export.export_class_type:
                 case 'StaticMeshActor':
-                    export.ReadProperties(True, False)
+                    export.ReadProperties(True)
                     mesh_comp = export.properties.TryGetValue('StaticMeshComponent') if cfg.meshes else None
                     mesh = TryGetMesh(mesh_comp, 'StaticMesh', cfg.materials) if mesh_comp else None
                     obj = SetupObject(bpy.context, export.object_name, mesh)
                     TryApplyRootComponent(export, obj)
                 case 'SkeletalMeshActor':
-                    export.ReadProperties(True, False)
+                    export.ReadProperties(True)
                     mesh_comp = export.properties.TryGetValue('SkeletalMeshComponent') if cfg.meshes else None
                     mesh = TryGetMesh(mesh_comp, 'SkeletalMesh', cfg.materials) if mesh_comp else None
                     obj = bpy.data.objects[mesh.name]
@@ -117,7 +117,7 @@ def ProcessUMapExport(export:Export, cfg:UMapImportSettings):
                             light_intensity *= 100
                             rot_off = 0
 
-                    export.ReadProperties(True, False)
+                    export.ReadProperties(True)
 
                     light = bpy.data.lights.new(export.object_name, light_type)
                     light_obj = SetupObject(bpy.context, light.name, light)
@@ -143,7 +143,7 @@ def ProcessUMapExport(export:Export, cfg:UMapImportSettings):
                             light.spot_blend = 1 - (inner_angle / outer_angle)
                 case 'BoxReflectionCapture':
                     if not cfg.cubemaps: return
-                    export.ReadProperties(False, False)
+                    export.ReadProperties(False)
 
                     probe = bpy.data.lightprobes.new(export.object_name, 'CUBE')
                     probe.influence_type = 'BOX'
@@ -160,14 +160,14 @@ def ProcessUMapExport(export:Export, cfg:UMapImportSettings):
                     TryApplyRootComponent(export, obj, def_scale=FVector(1000,1000,400), scale=0.01)
                 case 'CameraActor':
                     if cfg.cameras:
-                        export.ReadProperties(True, False)
+                        export.ReadProperties(True)
                         cam = bpy.data.cameras.new(name=export.object_name)
                         cam.display_size = 0.5
                         obj = SetupObject(bpy.context, export.object_name, cam)
                         TryApplyRootComponent(export, obj, 90)
                 #case _: print(f"Skipping \"{export.export_class_type}\"")
         case 'BlueprintGeneratedClass':
-            export.ReadProperties(True, False)
+            export.ReadProperties(True)
 
             bp_obj = SetupObject(bpy.context, export.object_name)
             TryApplyRootComponent(export, bp_obj)

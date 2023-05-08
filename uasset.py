@@ -186,7 +186,7 @@ class Export: #FObjectExport
         self.export_class:Import = asset.DecodePackageIndex(self.class_index)
         self.export_class_type = self.export_class.object_name if self.export_class else None
     def __repr__(self) -> str: return f"{self.object_name} [{len(self.properties) if self.properties != None else 'Unread'}]"
-    def ReadProperties(self, read_children=True, read_extras=True):
+    def ReadProperties(self, read_children=True, read_extras=False):
         if self.properties: return
         self.properties = Properties()
 
@@ -221,7 +221,7 @@ class Properties(dict):
     def TryGetProperties(self, key:str):
         export:Export = self.TryGetValue(key)
         if export:
-            export.ReadProperties(False, False)
+            export.ReadProperties(False)
             return export.properties
         return None
 class UProperty:

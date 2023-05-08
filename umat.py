@@ -38,7 +38,7 @@ def TryGetExtractedImport(imp:Import, extract_dir):
             with UAsset(tex_uasset_path, uproject=imp.asset.uproject) as asset:
                 for export in asset.exports:
                     if export.export_class_type == 'Texture2D':
-                        export.ReadProperties(False, False)
+                        export.ReadProperties(False)
                         tex.colorspace_settings.name = 'sRGB' if export.properties.TryGetValue('SRGB',True) else 'Non-Color'
                         tex['flip_y'] = export.properties.TryGetValue('bFlipGreenChannel',False)
                         break
