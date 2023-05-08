@@ -91,7 +91,7 @@ def HandleTextureObject(expr:Import, nodes_data:dict[str,NodeData], node_data:No
 default_mapping = UE2BlenderNodeMapping('ShaderNodeMath', label="UNKNOWN", color=Color((1,0,0)))
 UE2BlenderNode_dict = {
     'Material' : UE2BlenderNodeMapping('ShaderNodeBsdfPrincipled', hide=False, width=None, inputs={ 'BaseColor':'Base Color','Metallic':'Metallic','Specular':'Specular','Roughness':'Roughness',
-                                       'EmissiveColor':'Emission','Opacity':'Alpha','OpacityMask':'Alpha','Normal':'Normal','Refraction':'IOR' }, defaults={'BaseColor':(0,0,0,1)}),
+                                       'EmissiveColor':'Emission','Opacity':'Alpha','OpacityMask':'Alpha','Normal':'Normal','Refraction':'IOR' }, defaults={'BaseColor':0}),
     'MaterialExpressionAdd'               : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='ADD', inputs={'A':0,'B':1}, defaults={'A':0,'B':1}),
     'MaterialExpressionSubtract'          : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='SUBTRACT', inputs={'A':0,'B':1}, defaults={'A':0,'B':1}),
     'MaterialExpressionMultiply'          : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='MULTIPLY', inputs={'A':0,'B':1}, defaults={'A':0,'B':1}),
@@ -433,7 +433,7 @@ def ImportNodeGraph(filepath, uproject=None, name=None, mesh=None, log=False): #
                             additive.node_tree = bpy.data.node_groups['AdditiveSurface']
                             additive.location = node.location + Vector((0, 150))
                             node_tree.links.new(additive.outputs[0], node_tree.nodes['Material Output'].inputs['Surface'])
-                            node_data.input_remap = { 'EmissiveColor':additive.inputs['Color'] }
+                            node_data.input_remap = { 'EmissiveColor':additive.inputs['Emission'] }
                         case _:
                             mat.blend_method = mat.shadow_method = 'OPAQUE'
                     mat.use_backface_culling = not params.TryGetValue('TwoSided', False)
