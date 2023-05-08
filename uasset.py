@@ -125,6 +125,7 @@ prop_table_types = { "ExpressionOutput", "ScalarParameterValue", "TextureParamet
                     "MaterialCachedExpressionData" }
 prop_table_blacklist = { "MaterialTextureInfo" }
 struct_map = { "Vector":FVector, "Rotator":FVector, "Vector4":FVector4, "IntPoint":FIntPoint, "Quat":FQuat, "Box":FBox, "Color":FColor, "LinearColor":FLinearColor, "BoxSphereBounds":FBoxSphereBounds }
+temp_struct_blacklist = set()
 
 class ArrayDesc:
     def __init__(self, f:ByteStream, b32=True):
@@ -181,7 +182,7 @@ class Export: #FObjectExport
             self.create_before_create_depends_size = vals[4]'''
         
         self.properties = None
-        self.export_class = asset.DecodePackageIndex(self.class_index)
+        self.export_class:Import = asset.DecodePackageIndex(self.class_index)
         self.export_class_type = self.export_class.object_name if self.export_class else None
     def __repr__(self) -> str: return f"{self.object_name} [{len(self.properties) if self.properties != None else 'Unread'}]"
     def ReadProperties(self, read_children=True, read_extras=True):
@@ -258,8 +259,8 @@ class UProperty:
                         if structure: self.value = f.ReadStructure(structure)
                         elif self.struct_type in prop_table_types: self.value = Properties().Read(asset)
                         else:
-                            load_raw = not try_unknown_structs
-                            if try_unknown_structs:
+                            load_raw = try_unknown_structs
+                            if try_unknown_structs and self.struct_type not in temp_struct_blacklist:
                                 p = f.Position()
                                 try:
                                     self.value = Properties().Read(asset)
@@ -271,10 +272,12 @@ class UProperty:
                                     print(f"{self.struct_type} Struct Error: {e}")
                                     f.Seek(p)
                                     load_raw = True
+                                    temp_struct_blacklist.add(self.struct_type)
                                     pass
                             if load_raw:
                                 self.value = [x for x in f.ReadBytes(self.len)]
                                 if logging: print(f"Unknown Struct Type \"{self.struct_type}\"")
+                            #else: f.Seek(self.len, io.SEEK_CUR) # Seek slow
                 p_diff = f.Position() - (p + self.len)
                 if p_diff != 0:
                     f.Seek(p)
