@@ -281,4 +281,5 @@ if __name__ != "umap":
     #LoadUMap(r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\StarterBundle\ModularScifiProps\Maps\Promo.umap")
     #LoadUMap(r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\StarterBundle\ModularScifiProps\Maps\Overview_Props.umap")
     
+    #print(dict(sorted(uasset.struct_counts.items(), key=lambda item: item[1])))
     print("Done")

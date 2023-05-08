@@ -126,6 +126,7 @@ prop_table_types = { "ExpressionOutput", "ScalarParameterValue", "TextureParamet
 prop_table_blacklist = { "MaterialTextureInfo" }
 struct_map = { "Vector":FVector, "Rotator":FVector, "Vector4":FVector4, "IntPoint":FIntPoint, "Quat":FQuat, "Box":FBox, "Color":FColor, "LinearColor":FLinearColor, "BoxSphereBounds":FBoxSphereBounds }
 temp_struct_blacklist = set()
+#struct_counts = {}
 
 class ArrayDesc:
     def __init__(self, f:ByteStream, b32=True):
@@ -238,6 +239,10 @@ class UProperty:
     def TryReadData(self, asset:UAsset, header=True, read_children=True):
         assert self.type != "None"
         f = asset.f
+
+        '''c = struct_counts.get(self.type, 0)
+        c += 1
+        struct_counts[self.type] = c'''
         
         match self.type:
             case "StructProperty":
@@ -285,6 +290,34 @@ class UProperty:
                     if logging: print(f"Length Mismatch! {self.struct_type} : {p_diff}")
                 
                 assert self.len > 0
+            case "Int8Property" | "Int16Property" | "IntProperty" | "Int64Property":
+                if header: self.guid = asset.TryReadPropertyGuid()
+                match self.len:
+                    case 1: self.value = f.ReadInt8()
+                    case 2: self.value = f.ReadInt16()
+                    case 4: self.value = f.ReadInt32()
+                    case 8: self.value = f.ReadInt64()
+            case "ObjectProperty":
+                if header: self.guid = asset.TryReadPropertyGuid()
+                self.value = asset.DecodePackageIndex(f.ReadInt32())
+                if read_children and self.value and type(self.value) is Export:
+                    p = f.Position()
+                    self.value.ReadProperties()
+                    f.Seek(p)
+            case "FloatProperty" | "DoubleProperty":
+                if header: self.guid = asset.TryReadPropertyGuid()
+                match self.len:
+                    case 4: self.value = f.ReadFloat()
+                    case 8: self.value = f.ReadDouble()
+            case "UInt16Property" | "UInt32Property" | "UInt64Property": # TODO: UInt8?
+                if header: self.guid = asset.TryReadPropertyGuid()
+                match self.len:
+                    case 2: self.value = f.ReadUInt16()
+                    case 4: self.value = f.ReadUInt32()
+                    case 8: self.value = f.ReadUInt64()
+            case "NameProperty":
+                if header: self.guid = asset.TryReadPropertyGuid()
+                self.value = f.ReadFName(asset.names)
             case "ArrayProperty": # | "MapProperty":
                 #if self.type == "MapProperty": f.ReadBytes(8)
 
@@ -332,29 +365,12 @@ class UProperty:
                         prop = UProperty()
                         prop.name, prop.type, prop.len = ("", self.array_type, size_2)
                         if prop.TryReadData(asset, False, read_children): self.value.append(prop)
-            case "MapProperty":
-                #if header: self.guid = asset.TryReadPropertyGuid()
-                self.value = [x for x in f.ReadBytes(self.len)]
-                #print("!")
-                if header:
-                    self.key_type = f.ReadFName(asset.names)
-                    self.value_type = f.ReadFName(asset.names)
-            case "StrProperty":
-                if header: self.guid = asset.TryReadPropertyGuid()
-                self.value = f.ReadFString()
-            case "NameProperty":
-                if header: self.guid = asset.TryReadPropertyGuid()
-                self.value = f.ReadFName(asset.names)
-            case "ObjectProperty":
-                if header: self.guid = asset.TryReadPropertyGuid()
-                self.value = asset.DecodePackageIndex(f.ReadInt32())
-                if read_children and self.value and type(self.value) is Export:
-                    p = f.Position()
-                    self.value.ReadProperties()
-                    f.Seek(p)
             case "BoolProperty":
                 self.value = f.ReadBool()
                 if header: self.guid = asset.TryReadPropertyGuid()
+            case "StrProperty":
+                if header: self.guid = asset.TryReadPropertyGuid()
+                self.value = f.ReadFString()
             case "ByteProperty":
                 if header:
                     self.enum_type = f.ReadFName(asset.names)
@@ -363,24 +379,6 @@ class UProperty:
                     case 1: self.value = f.ReadUInt8()
                     case 8: self.value = f.ReadFName(asset.names)
                     case _: raise
-            case "Int8Property" | "Int16Property" | "IntProperty" | "Int64Property":
-                if header: self.guid = asset.TryReadPropertyGuid()
-                match self.len:
-                    case 1: self.value = f.ReadInt8()
-                    case 2: self.value = f.ReadInt16()
-                    case 4: self.value = f.ReadInt32()
-                    case 8: self.value = f.ReadInt64()
-            case "UInt16Property" | "UInt32Property" | "UInt64Property": # TODO: UInt8?
-                if header: self.guid = asset.TryReadPropertyGuid()
-                match self.len:
-                    case 2: self.value = f.ReadUInt16()
-                    case 4: self.value = f.ReadUInt32()
-                    case 8: self.value = f.ReadUInt64()
-            case "FloatProperty" | "DoubleProperty":
-                if header: self.guid = asset.TryReadPropertyGuid()
-                match self.len:
-                    case 4: self.value = f.ReadFloat()
-                    case 8: self.value = f.ReadDouble()
             case "EnumProperty":
                 if header:
                     self.enum_type = f.ReadFName(asset.names)
@@ -390,6 +388,13 @@ class UProperty:
                 if header: self.guid = asset.TryReadPropertyGuid()
                 self.value = []
                 for i in range(f.ReadInt32()): self.value.append((f.ReadInt32(), f.ReadFName(asset.names)))
+            case "MapProperty":
+                #if header: self.guid = asset.TryReadPropertyGuid()
+                self.value = [x for x in f.ReadBytes(self.len)]
+                #print("!")
+                if header:
+                    self.key_type = f.ReadFName(asset.names)
+                    self.value_type = f.ReadFName(asset.names)
             case "TextProperty" | "MulticastSparseDelegateProperty" | "DelegateProperty":
                 if header: self.guid = asset.TryReadPropertyGuid()
                 self.value = [x for x in f.ReadBytes(self.len)]
