@@ -336,35 +336,37 @@ def CreateNode(exp:Export, node_tree, nodes_data:dict[str,NodeData], graph_data:
     expr_guid = params.TryGetValue('ExpressionGUID')
     if expr_guid: graph_data.node_guids[expr_guid] = node_data
     return node_data
-def LinkSocket(node_tree, nodes_data:dict[str,NodeData], node_data:NodeData, expr:UProperty, property:str, dst_index):
-    link_node_exp = expr.value.node if expr.struct_type == 'ExpressionInput' else expr.value
-    link_node_data = nodes_data.get(link_node_exp.object_name)
-    if link_node_data:
-        link_node_type = link_node_data.classname
-        if link_node_type in class_blacklist: return
-        
-        node, link_node = (node_data.node, link_node_data.node)
-        outputs = link_node_data.link_indirect if link_node_data.link_indirect else link_node.outputs
+def TryLinkSocket(node_tree, nodes_data:dict[str,NodeData], node_data:NodeData, expr:UProperty, property:str, dst_index):
+    try:
+        link_node_exp = expr.value.node if expr.struct_type == 'ExpressionInput' else expr.value
+        link_node_data = nodes_data.get(link_node_exp.object_name)
+        if link_node_data:
+            link_node_type = link_node_data.classname
+            if link_node_type in class_blacklist: return False
+            
+            node, link_node = (node_data.node, link_node_data.node)
+            outputs = link_node_data.link_indirect if link_node_data.link_indirect else link_node.outputs
 
-        src_i = expr.value.node_output_i if expr.struct_type == 'ExpressionInput' else 0
-        if src_i >= len(outputs):
-            print(f"Link Failed, Missing Output Socket: {node.name}.{property} {src_i}/{len(outputs)}")
-            return
-        src_socket = outputs[src_i]
-        while src_socket.hide or src_socket.is_unavailable: # TODO: this is awful
-            src_i += 1
+            src_i = expr.value.node_output_i if expr.struct_type == 'ExpressionInput' else 0
+            if src_i >= len(outputs): raise Exception(f"Link Failed, Missing Output Socket: {node.name}.{property} {src_i}/{len(outputs)}")
             src_socket = outputs[src_i]
+            while src_socket.hide or src_socket.is_unavailable: # TODO: this is awful
+                src_i += 1
+                src_socket = outputs[src_i]
 
-        if link_node_type == 'MaterialExpressionAppendVector' and node.bl_idname == 'ShaderNodeCombineXYZ':
-            print("Link Failed, Unreal's append is annoying")
-            return
-        dst_socket = node.inputs[dst_index]
-        if node_data.input_remap and property in node_data.input_remap: dst_socket = node_data.input_remap[property]
-        if src_socket and dst_socket:
-            link = node_tree.links.new(src_socket, dst_socket)
-            if mute_fresnel and src_socket.node.bl_idname == 'ShaderNodeFresnel': link.is_muted = True
-        else: print(f"Link Failed, Missing Socket: {node.name}.{property}")
-    else: print(f"Link Failed, Missing Node: \"{expr.value}\" {str(link_node_exp.object_name)} (\"{os.path.basename(node_data.export.asset.filepath)}\")")
+            if link_node_type == 'MaterialExpressionAppendVector' and node.bl_idname == 'ShaderNodeCombineXYZ': raise Exception("Link Failed, Unreal's append is annoying")
+            dst_socket = node.inputs[dst_index]
+            if node_data.input_remap and property in node_data.input_remap: dst_socket = node_data.input_remap[property]
+            if src_socket and dst_socket:
+                link = node_tree.links.new(src_socket, dst_socket)
+                if mute_fresnel and src_socket.node.bl_idname == 'ShaderNodeFresnel': link.is_muted = True
+                return True
+            else: raise Exception(f"Link Failed, Missing Socket: {node.name}.{property}")
+        else: raise Exception(f"Link Failed, Missing Node: \"{expr.value}\" {str(link_node_exp.object_name)} (\"{os.path.basename(node_data.export.asset.filepath)}\")")
+    except Exception as e:
+        print(e)
+        node_tree['Error'] = True
+        return False
 def LinkSockets(node_tree, nodes_data:dict[str,NodeData], node_data:NodeData):
     mapping = UE2BlenderNode_dict.get(node_data.classname)
     if mapping and mapping.inputs:
@@ -374,9 +376,9 @@ def LinkSockets(node_tree, nodes_data:dict[str,NodeData], node_data:NodeData):
                 if callable(map_val): map_val(expr, nodes_data, node_data)
                 else:
                     match expr.type:
-                        case 'StructProperty': LinkSocket(node_tree, nodes_data, node_data, expr, property, map_val)
+                        case 'StructProperty': TryLinkSocket(node_tree, nodes_data, node_data, expr, property, map_val)
                         case 'ArrayProperty':
-                            for i, elem in enumerate(expr.value): LinkSocket(node_tree, nodes_data, node_data, elem['Input'], i, map_val[i])
+                            for i, elem in enumerate(expr.value): TryLinkSocket(node_tree, nodes_data, node_data, elem['Input'], i, map_val[i])
 def SetNodeTexture(node, image):
     node.image = image
     links = node.outputs['Color'].links
