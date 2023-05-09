@@ -89,9 +89,11 @@ def HandleTextureObject(expr:Import, nodes_data:dict[str,NodeData], node_data:No
         else: print(f"Missing Texture \"{tex_imp.import_ref.object_name}\"")
 
 default_mapping = UE2BlenderNodeMapping('ShaderNodeMath', label="UNKNOWN", color=Color((1,0,0)))
+mat_mapping = UE2BlenderNodeMapping('ShaderNodeBsdfPrincipled', hide=False, width=None, inputs={ 'BaseColor':'Base Color','Metallic':'Metallic','Specular':'Specular','Roughness':'Roughness',
+                                       'EmissiveColor':'Emission','Opacity':'Alpha','OpacityMask':'Alpha','Normal':'Normal','Refraction':'IOR' }, defaults={'BaseColor':0})
 UE2BlenderNode_dict = {
-    'Material' : UE2BlenderNodeMapping('ShaderNodeBsdfPrincipled', hide=False, width=None, inputs={ 'BaseColor':'Base Color','Metallic':'Metallic','Specular':'Specular','Roughness':'Roughness',
-                                       'EmissiveColor':'Emission','Opacity':'Alpha','OpacityMask':'Alpha','Normal':'Normal','Refraction':'IOR' }, defaults={'BaseColor':0}),
+    'Material'                                 : mat_mapping,
+    'MaterialExpressionMakeMaterialAttributes' : mat_mapping,
     'MaterialExpressionAdd'               : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='ADD', inputs={'A':0,'B':1}, defaults={'A':0,'B':1}),
     'MaterialExpressionSubtract'          : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='SUBTRACT', inputs={'A':0,'B':1}, defaults={'A':0,'B':1}),
     'MaterialExpressionMultiply'          : UE2BlenderNodeMapping('ShaderNodeVectorMath', subtype='MULTIPLY', inputs={'A':0,'B':1}, defaults={'A':0,'B':1}),
@@ -226,6 +228,19 @@ def HandleDefaultConstants(mapping, node, params):
                     case 'VECTOR': socket.default_value = (value, value, value)
                     case 'RGBA':   socket.default_value = (value, value, value, 1)
                     case _:        socket.default_value = value
+def TryRemapNormal(params, node_tree, node, node_data):
+    if 'Normal' in params:
+        normal_map = node_tree.nodes.new('ShaderNodeNormalMap') # TODO: set normal uv
+        normal_map.location = node.location + Vector((-200, -570))
+        node_tree.links.new(normal_map.outputs['Normal'], node.inputs['Normal'])
+
+        n2rgb = node_tree.nodes.new('ShaderNodeGroup')
+        n2rgb.node_tree = bpy.data.node_groups['NormalToRGB']
+        n2rgb.location = normal_map.location + Vector((-160, -130))
+        n2rgb.hide = True
+        node_tree.links.new(n2rgb.outputs['RGB'], normal_map.inputs['Color'])
+
+        node_data.input_remap = { 'Normal':n2rgb.inputs['Normal'] }
 
 def CreateNode(exp:Export, node_tree, nodes_data:dict[str,NodeData], graph_data:GraphData, mesh=None):
     name = exp.object_name
@@ -257,7 +272,10 @@ def CreateNode(exp:Export, node_tree, nodes_data:dict[str,NodeData], graph_data:
         mapping = default_mapping
         node_tree['Error'] = True
     
-    node_data.node = node = SetupNode(node_tree, name, mapping, node_data)
+    if mapping != mat_mapping: node_data.node = node = SetupNode(node_tree, name, mapping, node_data)
+    else:
+        node_data.node = node = node_tree.nodes['Principled BSDF']
+        SetNodePos(node, node_data.export.properties)
 
     sx, sy = (params.TryGetValue('SizeX'), params.TryGetValue('SizeY'))
     if sx != None: node.width = sx
@@ -333,6 +351,10 @@ def CreateNode(exp:Export, node_tree, nodes_data:dict[str,NodeData], graph_data:
                     SetNodeTexture(node, tex)
                     if params.TryGetValue('SamplerType') == 'SAMPLERTYPE_Normal': node.interpolation = 'Smart'
                 else: print(f"Missing Texture \"{tex_imp.import_ref.object_name}\"")
+        #case 'MaterialExpressionMakeMaterialAttributes': node_tree.links.new(node.outputs[0], node_tree.nodes['Material Output'].inputs['Surface'])
+
+    TryRemapNormal(params, node_tree, node, node_data)
+
     expr_guid = params.TryGetValue('ExpressionGUID')
     if expr_guid: graph_data.node_guids[expr_guid] = node_data
     return node_data
@@ -448,18 +470,7 @@ def ImportNodeGraph(filepath, uproject=None, name=None, mesh=None, log=False): #
                             mat.blend_method = mat.shadow_method = 'OPAQUE'
                     mat.use_backface_culling = not params.TryGetValue('TwoSided', False)
 
-                    if 'Normal' in params:
-                        normal_map = node_tree.nodes.new('ShaderNodeNormalMap') # TODO: set normal uv
-                        normal_map.location = node.location + Vector((-200, -570))
-                        node_tree.links.new(normal_map.outputs['Normal'], node.inputs['Normal'])
-
-                        n2rgb = node_tree.nodes.new('ShaderNodeGroup')
-                        n2rgb.node_tree = bpy.data.node_groups['NormalToRGB']
-                        n2rgb.location = normal_map.location + Vector((-160, -130))
-                        n2rgb.hide = True
-                        node_tree.links.new(n2rgb.outputs['RGB'], normal_map.inputs['Color'])
-
-                        node_data.input_remap = { 'Normal':n2rgb.inputs['Normal'] }
+                    TryRemapNormal(params, node_tree, node, node_data)
 
                     for name in nodes_data:
                         LinkSockets(node_tree, nodes_data, nodes_data[name]) # TODO: this iterates nodes without links!
@@ -577,6 +588,7 @@ if __name__ != "umat":
     #filepath = r"F:\Projects\Unreal Projects\Assets\Content\Test1434.uasset"
     #filepath = r"C:\Program Files\Epic Games\UE_4.27\Engine\Content\EngineMaterials\DefaultMaterial.uasset"
     #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\StarterBundle\ModularScifiProps\Materials\MI_Laptop_Mail.uasset"
-    filepath = r"C:/Users/jdeacutis/Documents/Unreal Projects/Assets/Content/StarterBundle/UE4_Assets/Environment_B/Materials/M_BigSnow.uasset"
+    #filepath = r"C:/Users/jdeacutis/Documents/Unreal Projects/Assets/Content/StarterBundle/UE4_Assets/Environment_B/Materials/M_BigSnow.uasset"
+    filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\Military_VOL5_Devices\Materials\MI_Mortar_02a.uasset"
     ImportNodeGraph(filepath)
     print("Done")
