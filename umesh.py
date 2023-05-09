@@ -435,13 +435,12 @@ def ImportSkeletalMesh(self:Export, import_materials=True, o=None):
             return mesh
     else: raise # TODO
 def ImportMeshUAsset(filepath:str, uproject=None, import_materials=True, log=False, o=None):
-    asset = UAsset(filepath, uproject=uproject)
-    asset.Read(False)
-    for export in asset.exports:
-        match export.export_class_type:
-            case 'StaticMesh': return ImportStaticMesh(export, import_materials, log)
-            case 'SkeletalMesh': return ImportSkeletalMesh(export, import_materials, o)
-    if log: print(f"\"{filepath}\" Mesh Export Not Found")
+    with UAsset(filepath, False, uproject) as asset:
+        for export in asset.exports:
+            match export.export_class_type:
+                case 'StaticMesh': return ImportStaticMesh(export, import_materials, log)
+                case 'SkeletalMesh': return ImportSkeletalMesh(export, import_materials, o)
+        if log: print(f"\"{filepath}\" Mesh Export Not Found")
     return None
 def ImportUMeshAsObject(filepath:str, uproject=None, materials=True):
     mesh = ImportMeshUAsset(filepath, uproject, materials, True)

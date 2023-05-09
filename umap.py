@@ -190,10 +190,11 @@ def ProcessUMapExport(export:Export, cfg:UMapImportSettings):
                 if bp_path.startswith("/Engine/"): return
                 bp_asset = export.asset.import_cache.get(bp_path)
                 if not bp_asset:
-                    export.asset.import_cache[bp_path] = bp_asset = UAsset(export.asset.ToProjectPath(bp_path), uproject=export.asset.uproject)
-                    bp_asset.Read(False)
+                    bp_asset = UAsset(export.asset.ToProjectPath(bp_path), False, export.asset.uproject)
+                    bp_asset = bp_asset.__enter__()
                     bp_asset.name2exp = {}
                     for exp in bp_asset.exports: bp_asset.name2exp[exp.object_name] = exp
+                    export.asset.import_cache[bp_path] = bp_asset
                 
                 for comp in bp_comps:
                     child_export = comp.value
@@ -284,12 +285,12 @@ if __name__ != "umap":
     #LoadUMap(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary.umap")
     #LoadUMap(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Overview.umap")
     #LoadUMap(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary_2.umap")
-    #LoadUMap(r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary.umap")
+    LoadUMap(r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary.umap")
     #LoadUMap(r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary_427.umap")
     #LoadUMap(r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\FPS_Weapon_Bundle\Maps\Weapons_Showcase.umap")
     #LoadUMap(r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\StarterBundle\ModularScifiProps\Maps\Promo.umap")
     #LoadUMap(r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\StarterBundle\ModularScifiProps\Maps\Overview_Props.umap")
-    LoadUMap(r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\StarterBundle\CollectionMaps\Map1.umap")
+    #LoadUMap(r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\StarterBundle\CollectionMaps\Map1.umap")
     
     #print(dict(sorted(uasset.struct_counts.items(), key=lambda item: item[1])))
     print("Done")

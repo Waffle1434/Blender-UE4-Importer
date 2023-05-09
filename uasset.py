@@ -126,6 +126,7 @@ prop_table_types = { "ExpressionOutput", "ScalarParameterValue", "TextureParamet
 prop_table_blacklist = { "MaterialTextureInfo" }
 struct_map = { "Vector":FVector, "Rotator":FVector, "Vector4":FVector4, "IntPoint":FIntPoint, "Quat":FQuat, "Box":FBox, "Color":FColor, "LinearColor":FLinearColor, "BoxSphereBounds":FBoxSphereBounds }
 temp_struct_blacklist = set()
+uasset_cache = {}
 
 class ArrayDesc:
     def __init__(self, f:ByteStream, b32=True):
@@ -283,7 +284,7 @@ class UProperty:
                 if p_diff != 0:
                     f.Seek(p)
                     self.raw = [x for x in f.ReadBytes(self.len)]
-                    if logging: print(f"Length Mismatch! {self.struct_type} : {p_diff}")
+                    if logging and self.struct_type != 'BoxSphereBounds': print(f"Length Mismatch! {self.struct_type} : {p_diff}")
                 
                 assert self.len > 0
             case "Int8Property" | "Int16Property" | "IntProperty" | "Int64Property":
@@ -503,9 +504,16 @@ class UAsset:
             for export in self.exports: export.ReadProperties(False)
             self.f.byte_stream.close()
             if log: print(f"Imported {self} in {time.time() - t0:.2f}s")
-    def Close(self): self.f.byte_stream.close()
+    def Close(self):
+        try: self.f.byte_stream.close()
+        except: pass
     def __enter__(self):
-        self.Read(self.read_all)
+        cached = uasset_cache.get(self.filepath)
+        if cached:
+            self = cached
+        else:
+            self.Read(self.read_all)
+            uasset_cache[self.filepath] = self
         return self
     def __exit__(self, *args): self.Close()
 
