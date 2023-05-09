@@ -271,18 +271,18 @@ class UProperty:
                                     self.value = Properties().Read(asset)
                                     if self.struct_type not in prop_table_blacklist and f.Position() - (p + self.len) == 0:
                                         prop_table_types.add(self.struct_type)
+                                        load_raw = False
                                         if logging:
                                             print(f"Unknown Struct \"{self.struct_type}\" is probably a property table")
                                 except Exception as e:
                                     print(f"{self.struct_type} Struct Error: {e}")
-                                    f.Seek(p)
-                                    load_raw = True
                                     temp_struct_blacklist.add(self.struct_type)
                                     pass
                             if load_raw:
+                                f.Seek(p)
                                 self.value = [x for x in f.ReadBytes(self.len)]
                                 if logging: print(f"Unknown Struct Type \"{self.struct_type}\"")
-                            #else: f.Seek(self.len, io.SEEK_CUR) # Seek slow
+                            else: f.Seek(p + self.len)
                 p_diff = f.Position() - (p + self.len)
                 if p_diff != 0:
                     f.Seek(p)

@@ -89,9 +89,10 @@ def ReadMeshBulkData(self:Export, asset:UAsset, f:uasset.ByteStream): # FByteBul
         for i_uv in range(len(wedge_uvs)):
             if len(wedge_uvs[i_uv]) > 0: uvs.append(bmsh.loops.layers.uv.new(f"UV{i_uv}"))
         
-        if len(wedge_colors) > 0:
-            col_lay = bmsh.loops.layers.color.new("Color")
-
+        has_normals = len(wedge_normals) > 0
+        has_colors = len(wedge_colors) > 0
+        if has_colors: col_lay = bmsh.loops.layers.color.new("Color")
+        
         spl_norms = []
         for i_wedge in range(0, len(wedge_indices), 3):
             try:
@@ -105,12 +106,20 @@ def ReadMeshBulkData(self:Export, asset:UAsset, f:uasset.ByteStream): # FByteBul
                 #face.smooth = face_smoothing_mask[i_poly] == 0
                 face.material_index = face_mat_indices[i_poly]
 
-                n1 = wedge_normals[i_wedge + 0]
-                n2 = wedge_normals[i_wedge + 1]
-                n3 = wedge_normals[i_wedge + 2]
-                spl_norms.append(Vector((n1.y, n1.x, n1.z)))
-                spl_norms.append(Vector((n2.y, n2.x, n2.z)))
-                spl_norms.append(Vector((n3.y, n3.x, n3.z)))
+                if has_normals:
+                    n1 = wedge_normals[i_wedge + 0]
+                    n2 = wedge_normals[i_wedge + 1]
+                    n3 = wedge_normals[i_wedge + 2]
+                    spl_norms.append(Vector((n1.y, n1.x, n1.z)))
+                    spl_norms.append(Vector((n2.y, n2.x, n2.z)))
+                    spl_norms.append(Vector((n3.y, n3.x, n3.z)))
+                if has_colors:
+                    col1 = wedge_colors[i_wedge + 0]
+                    col2 = wedge_colors[i_wedge + 1]
+                    col3 = wedge_colors[i_wedge + 2]
+                    loops[0][col_lay] = Vector((col1.r,col1.g,col1.b,col1.a)) / 255.0
+                    loops[1][col_lay] = Vector((col2.r,col2.g,col2.b,col2.a)) / 255.0
+                    loops[2][col_lay] = Vector((col3.r,col3.g,col3.b,col3.a)) / 255.0
 
                 for i_uv in range(len(uvs)):
                     uv1 = wedge_uvs[i_uv][i_wedge + 0]
@@ -119,19 +128,13 @@ def ReadMeshBulkData(self:Export, asset:UAsset, f:uasset.ByteStream): # FByteBul
                     loops[0][uvs[i_uv]].uv = (uv1.x, 1-uv1.y)
                     loops[1][uvs[i_uv]].uv = (uv2.x, 1-uv2.y)
                     loops[2][uvs[i_uv]].uv = (uv3.x, 1-uv3.y)
-                if len(wedge_colors) > 0:
-                    col1 = wedge_colors[i_wedge + 0]
-                    col2 = wedge_colors[i_wedge + 1]
-                    col3 = wedge_colors[i_wedge + 2]
-                    loops[0][col_lay] = Vector((col1.r,col1.g,col1.b,col1.a)) / 255.0
-                    loops[1][col_lay] = Vector((col2.r,col2.g,col2.b,col2.a)) / 255.0
-                    loops[2][col_lay] = Vector((col3.r,col3.g,col3.b,col3.a)) / 255.0
+                
             except ValueError: pass # Face already exists
 
         mesh = bpy.data.meshes.new(self.object_name)
         mesh.name = self.object_name
         bmsh.to_mesh(mesh)
-        mesh.normals_split_custom_set(spl_norms)
+        if has_normals: mesh.normals_split_custom_set(spl_norms)
         mesh.use_auto_smooth = True
         mesh.transform(Matrix.Identity(4) * 0.01)
         mesh["UAsset"] = self.asset.f.byte_stream.name
