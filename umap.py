@@ -24,6 +24,7 @@ class UMapImportSettings():
     lights_spot:      bool  = True
     lights_dir:       bool  = True
     cubemaps:         bool  = True
+    lightprobes:      bool  = True
     force_shadows:    bool  = False
     light_intensity:  float = 1
     light_angle_coef: float = 1
@@ -31,6 +32,7 @@ class UMapImportSettings():
 def SetupObject(context, name, data=None):
     obj = bpy.data.objects.new(name, data)
     obj.rotation_mode = 'YXZ'
+    obj.empty_display_type = 'ARROWS'
     context.collection.objects.link(obj)
     return obj
 def Transform(export:Export, obj, pitch_offset=0, def_scale=FVector(1,1,1), scale=1):
@@ -158,6 +160,12 @@ def ProcessUMapExport(export:Export, cfg:UMapImportSettings):
 
                     obj = SetupObject(bpy.context, export.object_name, probe)
                     TryApplyRootComponent(export, obj, def_scale=FVector(1000,1000,400), scale=0.01)
+
+                    if cfg.lightprobes:
+                        irr = bpy.data.lightprobes.new(export.object_name, 'GRID')
+                        irr.influence_distance = 1 / (1 - probe.falloff) - 1
+                        obj2 = SetupObject(bpy.context, f"{export.object_name}_irridance", irr)
+                        TryApplyRootComponent(export, obj2, def_scale=FVector(1000,1000,400), scale=0.01*(1 - probe.falloff))
                 case 'CameraActor':
                     if cfg.cameras:
                         export.ReadProperties(True)
@@ -241,7 +249,8 @@ class ImportUMap(bpy.types.Operator, ImportHelper):
     lights_point:     BoolProperty(name="Point Lights",       default=False)
     lights_spot:      BoolProperty(name="Spot Lights",        default=True)
     lights_dir:       BoolProperty(name="Directional Lights", default=True)
-    cubemaps:         BoolProperty(name="Cubemaps",           default=True)
+    cubemaps:         BoolProperty(name="Cubemaps",           default=True, description="Box Reflection Volumes")
+    lightprobes:      BoolProperty(name="Irradance Volumes",  default=True, description="Add Light Probe Volumes inside Box Reflection Volumes")
     force_shadows:    BoolProperty(name="Force Shadows",      default=False, description="Force all lights to cast shadows.")
     light_intensity:  FloatProperty(name="Light Brightness",  default=1, min=0, description="Optional multiplier for light intensity.")
     light_angle_coef: FloatProperty(name="Light Angle",       default=1, min=0, description="Optional multiplier for spotlight angle.")
@@ -250,7 +259,7 @@ class ImportUMap(bpy.types.Operator, ImportHelper):
         for file in self.files:
             if file.name != "":
                 cfg = UMapImportSettings(self.meshes, self.materials, self.cameras, self.lights_point, self.lights_spot, self.lights_dir, 
-                                   self.cubemaps, self.force_shadows, self.light_intensity, self.light_angle_coef)
+                                   self.cubemaps, self.lightprobes, self.force_shadows, self.light_intensity, self.light_angle_coef)
                 LoadUMap(self.directory + file.name, cfg)
         return {'FINISHED'}
 
