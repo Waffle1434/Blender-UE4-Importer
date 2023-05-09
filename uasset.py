@@ -126,7 +126,6 @@ prop_table_types = { "ExpressionOutput", "ScalarParameterValue", "TextureParamet
 prop_table_blacklist = { "MaterialTextureInfo" }
 struct_map = { "Vector":FVector, "Rotator":FVector, "Vector4":FVector4, "IntPoint":FIntPoint, "Quat":FQuat, "Box":FBox, "Color":FColor, "LinearColor":FLinearColor, "BoxSphereBounds":FBoxSphereBounds }
 temp_struct_blacklist = set()
-#struct_counts = {}
 
 class ArrayDesc:
     def __init__(self, f:ByteStream, b32=True):
@@ -196,9 +195,10 @@ class Export: #FObjectExport
         
         #self.asset.f.EnsureOpen()
         self.asset.f.Seek(self.serial_desc.offset)
-        self.properties.Read(self.asset, read_children=read_children)
+        try: self.properties.Read(self.asset, read_children=read_children)
+        except Exception as e:
+            print(f"Failed reading properties ({os.path.basename(self.asset.filepath)}.{self}): {e}")
 
-        #match export_class_type: case "Enum" | "UserDefinedEnum": export.enum = # TODO: post "normal export" data
         extras_len = (self.serial_desc.offset + self.serial_desc.count) - self.asset.f.Position()
         assert extras_len >= 0
         if read_extras: self.extras = [x for x in self.asset.f.ReadBytes(extras_len)] if extras_len > 0 else None
@@ -239,10 +239,6 @@ class UProperty:
     def TryReadData(self, asset:UAsset, header=True, read_children=True):
         assert self.type != "None"
         f = asset.f
-
-        '''c = struct_counts.get(self.type, 0)
-        c += 1
-        struct_counts[self.type] = c'''
         
         match self.type:
             case "StructProperty":
@@ -454,7 +450,7 @@ class USummary:
         if version_ue4 >= 507: self.preload_depends_desc = ArrayDesc(f)
 class UProject:
     def __init__(self, uasset_path:str):
-        self.dir = os.path.normpath(uasset_path[:uasset_path.find("\\Content\\")])
+        self.dir = uasset_path[:uasset_path.find("\\Content\\")]
         uproject_file = next(glob.iglob(f'{self.dir}\\*.uproject'), None)
         if uproject_file:
             with open(uproject_file, 'r') as file: engine_version = json.load(file)['EngineAssociation']
@@ -462,9 +458,9 @@ class UProject:
         else: self.engine_dir = self.dir
 class UAsset:
     def __init__(self, filepath:str, read_all=False, uproject=None):
-        self.filepath = filepath
+        self.filepath = os.path.normpath(filepath)
         if uproject: self.uproject = uproject
-        else: self.uproject = UProject(filepath)
+        else: self.uproject = UProject(self.filepath)
         self.extract_dir = os.path.join(self.uproject.dir, "Export")
         self.read_all = read_all
     def __repr__(self) -> str: return f"\"{self.f.byte_stream.name}\", {len(self.imports)} Imports, {len(self.exports)} Exports"

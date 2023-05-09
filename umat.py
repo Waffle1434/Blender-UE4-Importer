@@ -227,7 +227,7 @@ def HandleDefaultConstants(mapping, node, params):
                     case 'RGBA':   socket.default_value = (value, value, value, 1)
                     case _:        socket.default_value = value
 
-def CreateNode(exp:Export, node_tree, nodes_data:dict[str,NodeData], graph_data, mesh=None):
+def CreateNode(exp:Export, node_tree, nodes_data:dict[str,NodeData], graph_data:GraphData, mesh=None):
     name = exp.object_name
     classname = exp.export_class_type # TODO: inline?
     nodes_data[name] = node_data = NodeData(exp)
@@ -240,19 +240,22 @@ def CreateNode(exp:Export, node_tree, nodes_data:dict[str,NodeData], graph_data,
         classname = matfnc_imp.object_name
         if classname not in UE2BlenderNode_dict:
             matfnc_subtype = ImportMaterialFunction(matfnc_imp)
-            input_count = len(bpy.data.node_groups[matfnc_subtype].inputs)
+            node_group = bpy.data.node_groups[matfnc_subtype]
+            input_count = len(node_group.inputs)
             if input_count > 0:
                 inputs = []
                 for i in range(input_count): inputs.append(i)
                 inputs = { 'FunctionInputs':tuple(inputs) }
             else: inputs = None
             UE2BlenderNode_dict[classname] = UE2BlenderNodeMapping('ShaderNodeGroup', matfnc_subtype, hide=False, inputs=inputs)
+            if node_group.get('Error', False): UE2BlenderNode_dict[classname].color = Color((1,0,0))
     node_data.classname = classname
 
     mapping = UE2BlenderNode_dict.get(classname)
     if not mapping:
         print(f"UNKNOWN UMAT CLASS: {classname}")
         mapping = default_mapping
+        node_tree['Error'] = True
     
     node_data.node = node = SetupNode(node_tree, name, mapping, node_data)
 
@@ -344,18 +347,23 @@ def LinkSocket(node_tree, nodes_data:dict[str,NodeData], node_data:NodeData, exp
         outputs = link_node_data.link_indirect if link_node_data.link_indirect else link_node.outputs
 
         src_i = expr.value.node_output_i if expr.struct_type == 'ExpressionInput' else 0
+        if src_i >= len(outputs):
+            print(f"Link Failed, Missing Output Socket: {node.name}.{property} {src_i}/{len(outputs)}")
+            return
         src_socket = outputs[src_i]
         while src_socket.hide or src_socket.is_unavailable: # TODO: this is awful
             src_i += 1
             src_socket = outputs[src_i]
 
-        if link_node_type == 'MaterialExpressionAppendVector' and node.bl_idname == 'ShaderNodeCombineXYZ': raise Exception("Unreal's append is annoying")
+        if link_node_type == 'MaterialExpressionAppendVector' and node.bl_idname == 'ShaderNodeCombineXYZ':
+            print("Link Failed, Unreal's append is annoying")
+            return
         dst_socket = node.inputs[dst_index]
         if node_data.input_remap and property in node_data.input_remap: dst_socket = node_data.input_remap[property]
         if src_socket and dst_socket:
             link = node_tree.links.new(src_socket, dst_socket)
             if mute_fresnel and src_socket.node.bl_idname == 'ShaderNodeFresnel': link.is_muted = True
-        else: print(f"FAILED LINK: {node.name}.{property}")
+        else: print(f"Link Failed, Missing Socket: {node.name}.{property}")
     else: print(f"Link Failed, Missing Node: \"{expr.value}\" {str(link_node_exp.object_name)} (\"{os.path.basename(node_data.export.asset.filepath)}\")")
 def LinkSockets(node_tree, nodes_data:dict[str,NodeData], node_data:NodeData):
     mapping = UE2BlenderNode_dict.get(node_data.classname)
@@ -382,9 +390,9 @@ def ImportMaterialFunction(mat_fnc_imp:Import, mesh=None):
     return node_graph_name
 def ImportNodeGraph(filepath, uproject=None, name=None, mesh=None, log=False): # TODO: return asset?
     t0 = time.time()
-    if not os.path.exists(filepath):
+    '''if not os.path.exists(filepath):
         print(f"Error: \"{filepath}\" Does Not Exist!")
-        return (None, None)
+        return (None, None)'''
     TryAppendNodeGroups()
     out = None
     with UAsset(filepath, True, uproject) as asset:
@@ -490,7 +498,6 @@ def ImportNodeGraph(filepath, uproject=None, name=None, mesh=None, log=False): #
 
                     in_node = node_tree.nodes.new('NodeGroupInput')
                     out_node = node_tree.nodes.new('NodeGroupOutput')
-
                     input_positions = []
                     output_positions = []
                     
@@ -507,15 +514,14 @@ def ImportNodeGraph(filepath, uproject=None, name=None, mesh=None, log=False): #
                                     output_positions.append(node_data.node.location)
                                     node_tree.outputs.new('NodeSocketVector', props.TryGetValue('OutputName', "Result"))
                                     node_tree.links.new(node_data.node.outputs[0], out_node.inputs[len(node_tree.outputs)-1])
-                    
-                    in_pos = Vector((0,0))
-                    for pos in input_positions: in_pos += pos
-                    in_node.location = in_pos / len(input_positions) + Vector((-300,50))
-
-                    out_pos = Vector((0,0))
-                    for pos in output_positions: out_pos += pos
-                    out_node.location = out_pos / len(output_positions) + Vector((200,50))
-
+                    if len(input_positions) > 0:
+                        in_pos = Vector((0,0))
+                        for pos in input_positions: in_pos += pos
+                        in_node.location = in_pos / len(input_positions) + Vector((-300,50))
+                    if len(output_positions) > 0:
+                        out_pos = Vector((0,0))
+                        for pos in output_positions: out_pos += pos
+                        out_node.location = out_pos / len(output_positions) + Vector((200,50))
                     for name in nodes_data:
                         LinkSockets(node_tree, nodes_data, nodes_data[name]) # TODO: this iterates nodes without links!
     
@@ -568,6 +574,7 @@ if __name__ != "umat":
     #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\NewMaterial.uasset"
     #filepath = r"F:\Projects\Unreal Projects\Assets\Content\Test1434.uasset"
     #filepath = r"C:\Program Files\Epic Games\UE_4.27\Engine\Content\EngineMaterials\DefaultMaterial.uasset"
-    filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\StarterBundle\ModularScifiProps\Materials\MI_Laptop_Mail.uasset"
+    #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\StarterBundle\ModularScifiProps\Materials\MI_Laptop_Mail.uasset"
+    filepath = r"C:/Users/jdeacutis/Documents/Unreal Projects/Assets/Content/StarterBundle/UE4_Assets/Environment_B/Materials/M_BigSnow.uasset"
     ImportNodeGraph(filepath)
     print("Done")
