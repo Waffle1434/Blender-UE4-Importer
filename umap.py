@@ -170,7 +170,16 @@ def ProcessUMapExport(export:Export, cfg:UMapImportSettings):
                     if cfg.cameras:
                         export.ReadProperties(True)
                         cam = bpy.data.cameras.new(name=export.object_name)
+
+                        cam_props = export.properties.TryGetProperties('CameraComponent')
+                        if cam_props: h_fov = cam_props.TryGetValue('FieldOfView', 90)
+                        else: h_fov = 90
+
                         cam.display_size = 0.5
+                        cam.sensor_fit = 'HORIZONTAL'
+                        cam.lens_unit = 'FOV'
+                        cam.angle = math.radians(h_fov)
+
                         obj = SetupObject(bpy.context, export.object_name, cam)
                         TryApplyRootComponent(export, obj, 90)
                 #case _: print(f"Skipping \"{export.export_class_type}\"")
