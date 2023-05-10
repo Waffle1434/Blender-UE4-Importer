@@ -42,14 +42,23 @@ def Transform(export:Export, obj, pitch_offset=0, def_scale=FVector(1,1,1), scal
     if rel_loc := props.TryGetValue('RelativeLocation'): obj.location = Vector((rel_loc.y,rel_loc.x,rel_loc.z)) * 0.01
     
     # Unreal: Roll, Pitch, Yaw     File: Pitch, Yaw, Roll     Blender: Pitch, Roll, -Yaw     0,0,0 = fwd, down for lights
-    if rel_rot := props.TryGetValue('RelativeRotation'): obj.rotation_euler = Euler(((rel_rot.x+pitch_offset)*deg2rad, rel_rot.z*deg2rad, -rel_rot.y*deg2rad))
+    if rel_rot := props.TryGetValue('RelativeRotation'):
+        eu1 = Euler((pitch_offset*deg2rad, 0, 0), 'YXZ')
+        eu1.rotate(Euler((rel_rot.x*deg2rad, rel_rot.z*deg2rad, -rel_rot.y*deg2rad), 'YXZ'))
+        obj.rotation_euler = eu1
 
     rel_scale = props.TryGetValue('RelativeScale3D', def_scale)
     obj.scale = Vector((rel_scale.y,rel_scale.x,rel_scale.z)) * scale
 def TryApplyRootComponent(export:Export, obj, pitch_offset=0, def_scale=FVector(1,1,1), scale=1):
     if root_export := export.properties.TryGetValue('RootComponent'):
         root_export.ReadProperties(False)
+
+        if attach := root_export.properties.TryGetValue('AttachParent'): # TODO: unify?
+            assert hasattr(attach, 'bl_obj')
+            obj.parent = attach.bl_obj
+
         Transform(root_export, obj, pitch_offset, def_scale, scale)
+        root_export.bl_obj = obj
         return True
     return False
 def TryGetMesh(static_mesh_comp:Export, m_type, import_materials=True):
@@ -97,7 +106,7 @@ def ProcessUMapExport(export:Export, cfg:UMapImportSettings):
                     #obj = SetupObject(bpy.context, export.object_name, mesh)
                     TryApplyRootComponent(export, obj)
                 case 'PointLight' | 'SpotLight' | 'DirectionalLight':
-                    rot_off = -90
+                    rot_off = 90
                     light_intensity = cfg.light_intensity
                     match export.export_class_type:
                         case 'PointLight':
@@ -115,10 +124,10 @@ def ProcessUMapExport(export:Export, cfg:UMapImportSettings):
                     export.ReadProperties(True)
 
                     light = bpy.data.lights.new(export.object_name, light_type)
-                    light_obj = SetupObject(bpy.context, light.name, light)
-                    TryApplyRootComponent(export, light_obj, rot_off) # Blender lights are cursed, local Z- Forward, Y+ Up, X+ Right
+                    obj = SetupObject(bpy.context, light.name, light)
+                    TryApplyRootComponent(export, obj, rot_off) # Blender lights are cursed, local Z- Forward, Y+ Up, X+ Right
                     
-                    if export.export_class_type == 'DirectionalLight': light_obj.rotation_euler.rotate_axis('X', math.radians(90))
+                    if export.export_class_type == 'DirectionalLight': obj.rotation_euler.rotate_axis('X', math.radians(90))
                     
                     if light_comp := export.properties.TryGetValue('LightComponent'): # Export
                         light_props = light_comp.properties
@@ -127,7 +136,7 @@ def ProcessUMapExport(export:Export, cfg:UMapImportSettings):
                         light.color = Color((color.r,color.g,color.b)) / 255.0
                         cast = light_props.TryGetValue('CastShadows', True)
                         light.use_shadow = cast or cfg.force_shadows
-                        if not cast and hide_noncasting: light_obj.hide_viewport = light_obj.hide_render = True
+                        if not cast and hide_noncasting: obj.hide_viewport = obj.hide_render = True
                         light.shadow_soft_size = light_props.TryGetValue('SourceRadius', 0.05)
 
                         if light_type == 'SPOT':
@@ -166,13 +175,16 @@ def ProcessUMapExport(export:Export, cfg:UMapImportSettings):
 
                         obj = SetupObject(bpy.context, export.object_name, cam)
                         TryApplyRootComponent(export, obj, 90)
+                case 'Actor':
+                    export.ReadProperties(False)
+                    obj = SetupObject(bpy.context, export.object_name, None)
+                    TryApplyRootComponent(export, obj)
                 #case _: print(f"Skipping \"{export.export_class_type}\"")
         case 'BlueprintGeneratedClass':
             export.ReadProperties(True)
 
             bp_obj = SetupObject(bpy.context, export.object_name)
             TryApplyRootComponent(export, bp_obj)
-            if root_comp := export.properties.TryGetValue('RootComponent'): root_comp.bl_obj = bp_obj
 
             if bp_comps := export.properties.TryGetValue('BlueprintCreatedComponents'):
                 if not hasattr(export.asset, 'import_cache'): export.asset.import_cache = {}
