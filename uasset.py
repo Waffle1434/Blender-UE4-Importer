@@ -508,12 +508,12 @@ class UAsset:
         try: self.f.byte_stream.close()
         except: pass
     def __enter__(self):
-        cached = uasset_cache.get(self.filepath)
+        '''cached = uasset_cache.get(self.filepath)
         if cached:
             self = cached
         else:
-            self.Read(self.read_all)
-            uasset_cache[self.filepath] = self
+            uasset_cache[self.filepath] = self'''
+        self.Read(self.read_all)
         return self
     def __exit__(self, *args): self.Close()
 
