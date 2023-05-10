@@ -29,11 +29,21 @@ class UMapImportSettings():
     light_intensity:  float = 1
     light_angle_coef: float = 1
 
-def SetupObject(context, name, data=None):
+def SetupObjectFull(export:Export, data=None, name=None):
+    parent_coll = bpy.context.collection
+    if folder_path := export.properties.TryGetValue('FolderPath'):
+        for folder in folder_path.split('/'):
+            if (coll := bpy.data.collections.get(folder)) == None:
+                coll = bpy.data.collections.new(folder)
+                parent_coll.children.link(coll)
+            parent_coll = coll
+
+    return SetupObject(name if name else export.properties.TryGetValue('ActorLabel', export.object_name), data, parent_coll)
+def SetupObject(name, data, collection):
     obj = bpy.data.objects.new(name, data)
     obj.rotation_mode = 'YXZ'
     obj.empty_display_type = 'ARROWS'
-    context.collection.objects.link(obj)
+    collection.objects.link(obj)
     return obj
 def Transform(export:Export, obj, pitch_offset=0, def_scale=FVector(1,1,1), scale=1):
     props = export.properties
@@ -56,6 +66,9 @@ def TryApplyRootComponent(export:Export, obj, pitch_offset=0, def_scale=FVector(
         if attach := root_export.properties.TryGetValue('AttachParent'): # TODO: unify?
             assert hasattr(attach, 'bl_obj')
             obj.parent = attach.bl_obj
+            parent_coll = obj.parent.users_collection[0]
+            if parent_coll != obj.users_collection[0]:
+                parent_coll.objects.link(obj)
 
         Transform(root_export, obj, pitch_offset, def_scale, scale)
         root_export.bl_obj = obj
@@ -87,7 +100,7 @@ def TryGetMesh(static_mesh_comp:Export, m_type, import_materials=True):
                         for i in range(c_override):
                             if mat_override := mat_overrides[i].value: mesh.materials[i] = TryGetUMaterialImport(mat_override, mesh)
     return mesh
-def ProcessUMapExport(export:Export, cfg:UMapImportSettings):
+def ProcessUMapExport(export:Export, cfg:UMapImportSettings, map_coll):
     if type(export.export_class) is not uasset.Import: return
     match export.export_class.class_name:
         case 'Class':
@@ -96,14 +109,14 @@ def ProcessUMapExport(export:Export, cfg:UMapImportSettings):
                     export.ReadProperties(True)
                     mesh_comp = export.properties.TryGetValue('StaticMeshComponent') if cfg.meshes else None
                     mesh = TryGetMesh(mesh_comp, 'StaticMesh', cfg.materials) if mesh_comp else None
-                    obj = SetupObject(bpy.context, export.object_name, mesh)
+                    obj = SetupObjectFull(export, mesh)
                     TryApplyRootComponent(export, obj)
                 case 'SkeletalMeshActor':
                     export.ReadProperties(True)
                     mesh_comp = export.properties.TryGetValue('SkeletalMeshComponent') if cfg.meshes else None
                     mesh = TryGetMesh(mesh_comp, 'SkeletalMesh', cfg.materials) if mesh_comp else None
                     obj = bpy.data.objects[mesh.name]
-                    #obj = SetupObject(bpy.context, export.object_name, mesh)
+                    #obj = SetupObject(export.object_name, mesh) # TODO
                     TryApplyRootComponent(export, obj)
                 case 'PointLight' | 'SpotLight' | 'DirectionalLight':
                     rot_off = 90
@@ -124,7 +137,7 @@ def ProcessUMapExport(export:Export, cfg:UMapImportSettings):
                     export.ReadProperties(True)
 
                     light = bpy.data.lights.new(export.object_name, light_type)
-                    obj = SetupObject(bpy.context, light.name, light)
+                    obj = SetupObjectFull(export, light)
                     TryApplyRootComponent(export, obj, rot_off) # Blender lights are cursed, local Z- Forward, Y+ Up, X+ Right
                     
                     if export.export_class_type == 'DirectionalLight': obj.rotation_euler.rotate_axis('X', math.radians(90))
@@ -155,14 +168,24 @@ def ProcessUMapExport(export:Export, cfg:UMapImportSettings):
                     if (cap_props := export.properties.TryGetProperties('CaptureComponent')) and (box_props := cap_props.TryGetProperties('PreviewCaptureBox')):
                         if box_ext := box_props.TryGetValue('BoxExtent'): probe.falloff = 1 - max(box_ext.x, max(box_ext.y, box_ext.z))
 
-                    obj = SetupObject(bpy.context, export.object_name, probe)
+                    obj = SetupObjectFull(export, probe)
                     TryApplyRootComponent(export, obj, def_scale=FVector(1000,1000,400), scale=0.01)
 
                     if cfg.lightprobes:
                         irr = bpy.data.lightprobes.new(export.object_name, 'GRID')
                         irr.influence_distance = 1 / (1 - probe.falloff) - 1
-                        obj2 = SetupObject(bpy.context, f"{export.object_name}_irridance", irr)
+                        obj2 = SetupObjectFull(export, irr, f"{export.object_name}_irridance")
                         TryApplyRootComponent(export, obj2, def_scale=FVector(1000,1000,400), scale=0.01*(1 - probe.falloff))
+                case 'SphereReflectionCapture':
+                    if not cfg.cubemaps: return
+                    export.ReadProperties(False)
+
+                    probe = bpy.data.lightprobes.new(export.object_name, 'CUBE')
+                    probe.influence_type = 'ELIPSOID'
+                    if cap_comp := export.properties.TryGetProperties('CaptureComponent'): probe.influence_distance = cap_comp.TryGetValue('InfluenceRadius', 3000) * 0.01
+                    
+                    obj = SetupObjectFull(export, probe)
+                    TryApplyRootComponent(export, obj)
                 case 'CameraActor':
                     if cfg.cameras:
                         export.ReadProperties(True)
@@ -173,17 +196,17 @@ def ProcessUMapExport(export:Export, cfg:UMapImportSettings):
                         cam.display_size, cam.sensor_fit, cam.lens_unit = (0.5, 'HORIZONTAL', 'FOV')
                         cam.angle = math.radians(h_fov)
 
-                        obj = SetupObject(bpy.context, export.object_name, cam)
+                        obj = SetupObjectFull(export, cam)
                         TryApplyRootComponent(export, obj, 90)
                 case 'Actor':
                     export.ReadProperties(False)
-                    obj = SetupObject(bpy.context, export.object_name, None)
+                    obj = SetupObjectFull(export)
                     TryApplyRootComponent(export, obj)
                 #case _: print(f"Skipping \"{export.export_class_type}\"")
         case 'BlueprintGeneratedClass':
             export.ReadProperties(True)
 
-            bp_obj = SetupObject(bpy.context, export.object_name)
+            bp_obj = SetupObject(export.object_name)
             TryApplyRootComponent(export, bp_obj)
 
             if bp_comps := export.properties.TryGetValue('BlueprintCreatedComponents'):
@@ -208,7 +231,7 @@ def ProcessUMapExport(export:Export, cfg:UMapImportSettings):
                             gend_exp.ReadProperties()
 
                             mesh = TryGetMesh(gend_exp, 'StaticMesh', cfg.materials) if cfg.meshes else None
-                            child_export.bl_obj = obj = SetupObject(bpy.context, child_export.object_name, mesh)
+                            child_export.bl_obj = obj = SetupObject(child_export.object_name, mesh)
 
                             if attach := child_export.properties.TryGetValue('AttachParent'): # TODO: unify?
                                 assert hasattr(attach, 'bl_obj')
@@ -225,9 +248,13 @@ def LoadUMap(filepath, cfg=UMapImportSettings()):
 
     with UAsset(filepath) as asset:
         bpy.context.window_manager.progress_begin(0, len(asset.exports))
+
+        map_coll = bpy.data.collections.new(os.path.splitext(os.path.basename(filepath))[0])
+        bpy.context.scene.collection.children.link(map_coll)
+        bpy.context.view_layer.active_layer_collection = bpy.context.view_layer.layer_collection.children[map_coll.name]
+
         for i, export in enumerate(asset.exports):
-            #export.ReadProperties(False, False)
-            ProcessUMapExport(export, cfg)
+            ProcessUMapExport(export, cfg, map_coll)
             bpy.context.window_manager.progress_update(i)
         bpy.context.window_manager.progress_end()
     if hasattr(asset, 'import_cache'):
