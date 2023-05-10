@@ -128,7 +128,6 @@ def ReadMeshBulkData(self:Export, asset:UAsset, f:uasset.ByteStream): # FByteBul
                     loops[0][uvs[i_uv]].uv = (uv1.x, 1-uv1.y)
                     loops[1][uvs[i_uv]].uv = (uv2.x, 1-uv2.y)
                     loops[2][uvs[i_uv]].uv = (uv3.x, 1-uv3.y)
-                
             except ValueError: pass # Face already exists
 
         mesh = bpy.data.meshes.new(self.object_name)

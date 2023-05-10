@@ -42,9 +42,7 @@ def TryGetExtractedImport(imp:Import, extract_dir):
                         tex.colorspace_settings.name = 'sRGB' if export.properties.TryGetValue('SRGB',True) else 'Non-Color'
                         tex['flip_y'] = export.properties.TryGetValue('bFlipGreenChannel',False)
                         break
-        except:
-            imp.extracted = None
-            pass
+        except: imp.extracted = None
     return imp.extracted
 
 class UE2BlenderNodeMapping():
@@ -75,16 +73,14 @@ class GraphData(): # TODO: redundant, only returned node_guids used
 
 def HandleTextureObject(expr:Import, nodes_data:dict[str,NodeData], node_data:NodeData):
     tex_param_node_exp = expr.value.node
-    tex_imp = tex_param_node_exp.properties.TryGetValue('Texture')
-    if tex_imp:
+    if tex_imp := tex_param_node_exp.properties.TryGetValue('Texture'):
         node = node_data.node
 
         tex_param_node_data = nodes_data[tex_param_node_exp.object_name]
         tex_param_node_data.linked_tex_nodes = getattr(tex_param_node_data, 'linked_tex_nodes', [])
         tex_param_node_data.linked_tex_nodes.append(node)
-
-        tex = TryGetExtractedImport(tex_imp, tex_imp.asset.extract_dir) # TODO: unify?
-        if tex:
+        
+        if tex := TryGetExtractedImport(tex_imp, tex_imp.asset.extract_dir): # TODO: unify?
             if node.bl_idname == 'ShaderNodeTexImage': SetNodeTexture(node, tex)
         else: print(f"Missing Texture \"{tex_imp.import_ref.object_name}\"")
 
@@ -228,11 +224,11 @@ def HandleDefaultConstants(mapping, node, params):
                     case 'VECTOR': socket.default_value = (value, value, value)
                     case 'RGBA':   socket.default_value = (value, value, value, 1)
                     case _:        socket.default_value = value
-def TryRemapNormal(params, node_tree, node, node_data):
+def TryRemapNormal(params, node_tree, node_data):
     if 'Normal' in params:
         normal_map = node_tree.nodes.new('ShaderNodeNormalMap') # TODO: set normal uv
-        normal_map.location = node.location + Vector((-200, -570))
-        node_tree.links.new(normal_map.outputs['Normal'], node.inputs['Normal'])
+        normal_map.location = node_data.node.location + Vector((-200, -570))
+        node_tree.links.new(normal_map.outputs['Normal'], node_data.node.inputs['Normal'])
 
         n2rgb = node_tree.nodes.new('ShaderNodeGroup')
         n2rgb.node_tree = bpy.data.node_groups['NormalToRGB']
@@ -241,6 +237,24 @@ def TryRemapNormal(params, node_tree, node, node_data):
         node_tree.links.new(n2rgb.outputs['RGB'], normal_map.inputs['Color'])
 
         node_data.input_remap = { 'Normal':n2rgb.inputs['Normal'] }
+def SetBlend(params, mat, node_data):
+    match params.TryGetValue('BlendMode'):
+        case 'BLEND_Translucent':
+            mat.blend_method, mat.shadow_method = ('BLEND', 'HASHED')
+            node_data.node.inputs['Transmission'].default_value = 1
+        case 'BLEND_Masked':
+            mat.blend_method = mat.shadow_method = 'CLIP'
+        case 'BLEND_Additive':
+            mat.blend_method, mat.shadow_method = ('BLEND', 'NONE')
+
+            additive = mat.node_tree.nodes.new('ShaderNodeGroup')
+            additive.node_tree = bpy.data.node_groups['AdditiveSurface']
+            additive.location = node_data.node.location + Vector((0, 150))
+            mat.node_tree.links.new(additive.outputs[0], mat.node_tree.nodes['Material Output'].inputs['Surface'])
+            node_data.input_remap = { 'EmissiveColor':additive.inputs['Emission'] }
+        case _:
+            mat.blend_method = mat.shadow_method = 'OPAQUE'
+def SetTwoSided(params, mat): mat.use_backface_culling = not params.TryGetValue('TwoSided', False)
 
 def CreateNode(exp:Export, node_tree, nodes_data:dict[str,NodeData], graph_data:GraphData, mesh=None):
     name = exp.object_name
@@ -277,19 +291,16 @@ def CreateNode(exp:Export, node_tree, nodes_data:dict[str,NodeData], graph_data:
         node_data.node = node = node_tree.nodes['Principled BSDF']
         SetNodePos(node, node_data.export.properties)
 
-    sx, sy = (params.TryGetValue('SizeX'), params.TryGetValue('SizeY'))
-    if sx != None: node.width = sx
+    if (sx := params.TryGetValue('SizeX')) != None: node.width = sx
     elif mapping.width: node.width = mapping.width
-    if sy != None: node.height = sy
-    txt, param_name = (params.TryGetValue('Text'), params.TryGetValue('ParameterName'))
-    if txt: node.label = txt
-    elif param_name:
-        node.label = param_name
-        node.width = max(node.width, 25 + 7*len(param_name))
-    if param_name:
+    if (sy := params.TryGetValue('SizeY')) != None: node.height = sy
+    
+    if param_name := params.TryGetValue('ParameterName'):
         param_nodes = graph_data.param_nodes.get(param_name)
         if not param_nodes: graph_data.param_nodes[param_name] = param_nodes = []
         param_nodes.append(node_data)
+    if txt := params.TryGetValue('Text'): node.label = txt
+    elif param_name: node.label, node.width = (param_name, max(node.width, 25 + 7*len(param_name)))
 
     HandleDefaultConstants(mapping, node, params)
     if mapping.constants:
@@ -326,14 +337,11 @@ def CreateNode(exp:Export, node_tree, nodes_data:dict[str,NodeData], graph_data:
                 node.inputs[2].hide = True
     match classname:
         case 'MaterialExpressionTextureCoordinate':
-            uv_i = params.TryGetValue('CoordinateIndex')
-            if uv_i != None:
+            if (uv_i := params.TryGetValue('CoordinateIndex')) != None:
                 if mesh == None: node.uv_map = f"UV{uv_i}"
                 else:
                     try: node.uv_map = mesh.uv_layers.keys()[uv_i]
-                    except:
-                        print(f"Failed to use UV{uv_i} from mesh")
-                        pass
+                    except: print(f"Failed to use UV{uv_i} from mesh")
             tiling = (params.TryGetValue('UTiling', 1), params.TryGetValue('VTiling', 1))
             if tiling[0] != 1 or tiling[1] != 1:
                 mult:bpy.types.ShaderNode = node_tree.nodes.new('ShaderNodeVectorMath')
@@ -344,25 +352,21 @@ def CreateNode(exp:Export, node_tree, nodes_data:dict[str,NodeData], graph_data:
                 node_tree.links.new(node.outputs[0], mult.inputs[0])
                 node_data.link_indirect = mult.outputs
         case 'MaterialExpressionTextureSampleParameter2D' | 'MaterialExpressionTextureSample':
-            tex_imp = params.TryGetValue('Texture')
-            if tex_imp:
-                tex = TryGetExtractedImport(tex_imp, exp.asset.extract_dir)
-                if tex:
+            if tex_imp := params.TryGetValue('Texture'):
+                if tex := TryGetExtractedImport(tex_imp, exp.asset.extract_dir):
                     SetNodeTexture(node, tex)
                     if params.TryGetValue('SamplerType') == 'SAMPLERTYPE_Normal': node.interpolation = 'Smart'
                 else: print(f"Missing Texture \"{tex_imp.import_ref.object_name}\"")
         #case 'MaterialExpressionMakeMaterialAttributes': node_tree.links.new(node.outputs[0], node_tree.nodes['Material Output'].inputs['Surface'])
 
-    TryRemapNormal(params, node_tree, node, node_data)
+    TryRemapNormal(params, node_tree, node_data)
 
-    expr_guid = params.TryGetValue('ExpressionGUID')
-    if expr_guid: graph_data.node_guids[expr_guid] = node_data
+    if expr_guid := params.TryGetValue('ExpressionGUID'): graph_data.node_guids[expr_guid] = node_data
     return node_data
 def TryLinkSocket(node_tree, nodes_data:dict[str,NodeData], node_data:NodeData, expr:UProperty, property:str, dst_index):
     try:
         link_node_exp = expr.value.node if expr.struct_type == 'ExpressionInput' else expr.value
-        link_node_data = nodes_data.get(link_node_exp.object_name)
-        if link_node_data:
+        if link_node_data := nodes_data.get(link_node_exp.object_name):
             link_node_type = link_node_data.classname
             if link_node_type in class_blacklist: return False
             
@@ -437,7 +441,7 @@ def ImportNodeGraph(filepath, uproject=None, name=None, mesh=None, log=False): #
                     SetNodePos(node, params, 'EditorX', 'EditorY')
                     HandleDefaultConstants(UE2BlenderNode_dict['Material'], node, params)
                     node_tree.nodes['Material Output'].location = node.location + Vector((300,0))
-                    node_data = NodeData(exp, node=node)
+                    nodes_data[node.name] = node_data = NodeData(exp, node=node)
 
                     for exr_exp in params.TryGetValue('Expressions', ()): CreateNode(exr_exp.value, node_tree, nodes_data, graph_data, mesh)
                     for comment_exp in params.TryGetValue('EditorComments', ()):
@@ -452,29 +456,12 @@ def ImportNodeGraph(filepath, uproject=None, name=None, mesh=None, log=False): #
                         node_tree.links.new(emission.outputs[0], node_tree.nodes['Material Output'].inputs['Surface'])
                         node_data.input_remap = { 'EmissiveColor':emission.inputs['Color'] }
 
-                    match params.TryGetValue('BlendMode'):
-                        case 'BLEND_Translucent':
-                            mat.blend_method, mat.shadow_method = ('BLEND', 'HASHED')
-                            node.inputs['Transmission'].default_value = 1
-                        case 'BLEND_Masked':
-                            mat.blend_method = mat.shadow_method = 'CLIP'
-                        case 'BLEND_Additive':
-                            mat.blend_method, mat.shadow_method = ('BLEND', 'NONE')
+                    SetBlend(params, mat, node_data)
+                    SetTwoSided(params, mat)
 
-                            additive = node_tree.nodes.new('ShaderNodeGroup')
-                            additive.node_tree = bpy.data.node_groups['AdditiveSurface']
-                            additive.location = node.location + Vector((0, 150))
-                            node_tree.links.new(additive.outputs[0], node_tree.nodes['Material Output'].inputs['Surface'])
-                            node_data.input_remap = { 'EmissiveColor':additive.inputs['Emission'] }
-                        case _:
-                            mat.blend_method = mat.shadow_method = 'OPAQUE'
-                    mat.use_backface_culling = not params.TryGetValue('TwoSided', False)
+                    TryRemapNormal(params, node_tree, node_data)
 
-                    TryRemapNormal(params, node_tree, node, node_data)
-
-                    for name in nodes_data:
-                        LinkSockets(node_tree, nodes_data, nodes_data[name]) # TODO: this iterates nodes without links!
-                    LinkSockets(node_tree, nodes_data, node_data)
+                    for name in nodes_data: LinkSockets(node_tree, nodes_data, nodes_data[name]) # TODO: this iterates nodes without links!
                     
                     ior = node.inputs['IOR']
                     if ior.is_linked: ior.links[0].is_muted = mute_ior
@@ -494,16 +481,18 @@ def ImportNodeGraph(filepath, uproject=None, name=None, mesh=None, log=False): #
                             node.inputs['RGB'].default_value = value.ToTuple()
                             node.inputs['A'].default_value = value.a
                     for param in params.TryGetValue('TextureParameterValues', ()):
-                        tex_imp = param.value.TryGetValue('ParameterValue')
-                        if tex_imp:
-                            tex = TryGetExtractedImport(tex_imp, tex_imp.asset.extract_dir) # TODO: reuse?
-                            if tex:
+                        if tex_imp := param.value.TryGetValue('ParameterValue'):
+                            if tex := TryGetExtractedImport(tex_imp, tex_imp.asset.extract_dir): # TODO: reuse?
                                 for tex_node_data in graph_data.param_nodes.get(param.value.TryGetValue('ParameterName'), []):
                                     tex_node = tex_node_data.node
                                     if tex_node.bl_idname == 'ShaderNodeTexImage': SetNodeTexture(tex_node, tex)
                                     else:
                                         for tex_node in tex_node_data.linked_tex_nodes: SetNodeTexture(tex_node, tex)
                             else: print(f"Missing Texture \"{tex_imp.import_ref.object_name}\"")
+                    
+                    if overrides := params.TryGetValue('BasePropertyOverrides'):
+                        if overrides.TryGetValue('bOverride_BlendMode'): SetBlend(overrides, mat, graph_data.nodes_data['Principled BSDF'])
+                        if overrides.TryGetValue('bOverride_TwoSided'): SetTwoSided(overrides, mat)
                 case 'MaterialFunction': # TODO: very similar to Material, merge?
                     out = node_tree = bpy.data.node_groups.new(exp.object_name, 'ShaderNodeTree')
                     graph_data = GraphData() # TODO: replace with attributes on export?
@@ -515,8 +504,7 @@ def ImportNodeGraph(filepath, uproject=None, name=None, mesh=None, log=False): #
                     output_positions = []
                     
                     for exr_exp in params.TryGetValue('FunctionExpressions', ()):
-                        node_data = CreateNode(exr_exp.value, node_tree, nodes_data, graph_data, None)
-                        if node_data:
+                        if node_data := CreateNode(exr_exp.value, node_tree, nodes_data, graph_data, None):
                             props = node_data.export.properties
                             match node_data.classname:
                                 case 'MaterialExpressionFunctionInput':
@@ -545,9 +533,7 @@ def TryGetUMaterialImport(mat_imp:Import, mesh=None):
     if not mat:
         umat_path = mat_imp.asset.ToProjectPath(mat_imp.import_ref.object_name)
         try: mat, graph_data = ImportNodeGraph(umat_path, mat_imp.asset.uproject, mesh=mesh)
-        except Exception as e:
-            print(f"Failed to Import {mat_imp.object_name}: {e}")
-            pass
+        except Exception as e: print(f"Failed to Import {mat_imp.object_name}: {e}")
     return mat
 
 def menu_import_umat(self, context): self.layout.operator(ImportUMat.bl_idname, text="UE Material (.uasset)")
@@ -590,6 +576,7 @@ if __name__ != "umat":
     #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\StarterBundle\ModularScifiProps\Materials\MI_Laptop_Mail.uasset"
     #filepath = r"C:/Users/jdeacutis/Documents/Unreal Projects/Assets/Content/StarterBundle/UE4_Assets/Environment_B/Materials/M_BigSnow.uasset"
     #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\Military_VOL5_Devices\Materials\MI_Mortar_02a.uasset"
-    filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\Military_VOL3_Checkpoint\Materials\MI_Sandbags_02a.uasset"
+    #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\Military_VOL3_Checkpoint\Materials\MI_Sandbags_02a.uasset"
+    filepath = r"C:/Users/jdeacutis/Documents/Unreal Projects/Assets/Content/Military_VOL3_Checkpoint/Materials/MI_Barbed_Wire_Stop_01a.uasset"
     ImportNodeGraph(filepath)
     print("Done")

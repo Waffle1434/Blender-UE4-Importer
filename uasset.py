@@ -249,13 +249,14 @@ class UProperty:
                     self.guid = asset.TryReadPropertyGuid()
 
                 p = f.Position()
+                p_next = p + self.len
                 match self.struct_type:
                     case "Guid": self.value = f.ReadGuid()
                     case "ExpressionInput": self.value = FExpressionInput(asset)
                     case "ColorMaterialInput" | "ScalarMaterialInput" | "VectorMaterialInput":
                         p = f.Position()
                         self.value = asset.GetExport(f.ReadInt32())# TODO: other data is default value?
-                        f.Seek(p + self.len)
+                        f.Seek(p_next)
                     case _:
                         structure = struct_map.get(self.struct_type)
                         if structure: self.value = f.ReadStructure(structure)
@@ -266,7 +267,7 @@ class UProperty:
                                 p = f.Position()
                                 try:
                                     self.value = Properties().Read(asset)
-                                    if self.struct_type not in prop_table_blacklist and f.Position() - (p + self.len) == 0:
+                                    if self.struct_type not in prop_table_blacklist and f.Position() - p_next == 0:
                                         prop_table_types.add(self.struct_type)
                                         load_raw = False
                                         if logging:
@@ -274,13 +275,12 @@ class UProperty:
                                 except Exception as e:
                                     print(f"{self.struct_type} Struct Error: {e}")
                                     temp_struct_blacklist.add(self.struct_type)
-                                    pass
                             if load_raw:
                                 f.Seek(p)
                                 self.value = [x for x in f.ReadBytes(self.len)]
                                 if logging: print(f"Unknown Struct Type \"{self.struct_type}\"")
-                            else: f.Seek(p + self.len)
-                p_diff = f.Position() - (p + self.len)
+                            else: f.Seek(p_next)
+                p_diff = f.Position() - p_next
                 if p_diff != 0:
                     f.Seek(p)
                     self.raw = [x for x in f.ReadBytes(self.len)]
@@ -348,7 +348,8 @@ class UProperty:
                                 if prop.TryReadData(asset, False, read_children): self.value.append(prop)
                             else:
                                 self.value.append(Properties().Read(asset))
-                    #except: pass
+                    except Exception as e:
+                        print(f"Array Exception: {e}")
                     finally:
                         p_diff = next - f.Position()
                         if p_diff != 0:
