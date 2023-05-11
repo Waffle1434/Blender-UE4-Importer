@@ -17,6 +17,7 @@ deg2rad = math.radians(1)
 
 @dataclass
 class UMapImportSettings():
+    folders:          bool  = True
     meshes:           bool  = True
     materials:        bool  = True
     cameras:          bool  = True
@@ -29,9 +30,9 @@ class UMapImportSettings():
     light_intensity:  float = 1
     light_angle_coef: float = 1
 
-def SetupObjectFull(export:Export, data=None, name=None):
+def SetupObjectFull(cfg:UMapImportSettings, export:Export, data=None, name=None):
     parent_coll = bpy.context.collection
-    if folder_path := export.properties.TryGetValue('FolderPath'):
+    if cfg.folders and (folder_path := export.properties.TryGetValue('FolderPath')):
         for folder in folder_path.split('/'):
             if (coll := bpy.data.collections.get(folder)) == None:
                 coll = bpy.data.collections.new(folder)
@@ -59,17 +60,16 @@ def Transform(export:Export, obj, pitch_offset=0, def_scale=FVector(1,1,1), scal
 
     rel_scale = props.TryGetValue('RelativeScale3D', def_scale)
     obj.scale = Vector((rel_scale.y,rel_scale.x,rel_scale.z)) * scale
+def Parent(export:Export, obj):
+    if attach := export.properties.TryGetValue('AttachParent'): # TODO: unify?
+        assert hasattr(attach, 'bl_obj')
+        obj.parent = attach.bl_obj
+        parent_coll = obj.parent.users_collection[0]
+        if parent_coll != obj.users_collection[0]: parent_coll.objects.link(obj)
 def TryApplyRootComponent(export:Export, obj, pitch_offset=0, def_scale=FVector(1,1,1), scale=1):
     if root_export := export.properties.TryGetValue('RootComponent'):
         root_export.ReadProperties(False)
-
-        if attach := root_export.properties.TryGetValue('AttachParent'): # TODO: unify?
-            assert hasattr(attach, 'bl_obj')
-            obj.parent = attach.bl_obj
-            parent_coll = obj.parent.users_collection[0]
-            if parent_coll != obj.users_collection[0]:
-                parent_coll.objects.link(obj)
-
+        Parent(root_export, obj)
         Transform(root_export, obj, pitch_offset, def_scale, scale)
         root_export.bl_obj = obj
         return True
@@ -100,7 +100,7 @@ def TryGetMesh(static_mesh_comp:Export, m_type, import_materials=True):
                         for i in range(c_override):
                             if mat_override := mat_overrides[i].value: mesh.materials[i] = TryGetUMaterialImport(mat_override, mesh)
     return mesh
-def ProcessUMapExport(export:Export, cfg:UMapImportSettings, map_coll):
+def ProcessUMapExport(export:Export, cfg:UMapImportSettings):
     if type(export.export_class) is not uasset.Import: return
     match export.export_class.class_name:
         case 'Class':
@@ -109,7 +109,7 @@ def ProcessUMapExport(export:Export, cfg:UMapImportSettings, map_coll):
                     export.ReadProperties(True)
                     mesh_comp = export.properties.TryGetValue('StaticMeshComponent') if cfg.meshes else None
                     mesh = TryGetMesh(mesh_comp, 'StaticMesh', cfg.materials) if mesh_comp else None
-                    obj = SetupObjectFull(export, mesh)
+                    obj = SetupObjectFull(cfg, export, mesh)
                     TryApplyRootComponent(export, obj)
                 case 'SkeletalMeshActor':
                     export.ReadProperties(True)
@@ -137,7 +137,7 @@ def ProcessUMapExport(export:Export, cfg:UMapImportSettings, map_coll):
                     export.ReadProperties(True)
 
                     light = bpy.data.lights.new(export.object_name, light_type)
-                    obj = SetupObjectFull(export, light)
+                    obj = SetupObjectFull(cfg, export, light)
                     TryApplyRootComponent(export, obj, rot_off) # Blender lights are cursed, local Z- Forward, Y+ Up, X+ Right
                     
                     if export.export_class_type == 'DirectionalLight': obj.rotation_euler.rotate_axis('X', math.radians(90))
@@ -168,13 +168,13 @@ def ProcessUMapExport(export:Export, cfg:UMapImportSettings, map_coll):
                     if (cap_props := export.properties.TryGetProperties('CaptureComponent')) and (box_props := cap_props.TryGetProperties('PreviewCaptureBox')):
                         if box_ext := box_props.TryGetValue('BoxExtent'): probe.falloff = 1 - max(box_ext.x, max(box_ext.y, box_ext.z))
 
-                    obj = SetupObjectFull(export, probe)
+                    obj = SetupObjectFull(cfg, export, probe)
                     TryApplyRootComponent(export, obj, def_scale=FVector(1000,1000,400), scale=0.01)
 
                     if cfg.lightprobes:
                         irr = bpy.data.lightprobes.new(export.object_name, 'GRID')
                         irr.influence_distance = 1 / (1 - probe.falloff) - 1
-                        obj2 = SetupObjectFull(export, irr, f"{export.object_name}_irridance")
+                        obj2 = SetupObjectFull(cfg, export, irr, f"{export.object_name}_irridance")
                         TryApplyRootComponent(export, obj2, def_scale=FVector(1000,1000,400), scale=0.01*(1 - probe.falloff))
                 case 'SphereReflectionCapture':
                     if not cfg.cubemaps: return
@@ -184,7 +184,7 @@ def ProcessUMapExport(export:Export, cfg:UMapImportSettings, map_coll):
                     probe.influence_type = 'ELIPSOID'
                     if cap_comp := export.properties.TryGetProperties('CaptureComponent'): probe.influence_distance = cap_comp.TryGetValue('InfluenceRadius', 3000) * 0.01
                     
-                    obj = SetupObjectFull(export, probe)
+                    obj = SetupObjectFull(cfg, export, probe)
                     TryApplyRootComponent(export, obj)
                 case 'CameraActor':
                     if cfg.cameras:
@@ -196,17 +196,17 @@ def ProcessUMapExport(export:Export, cfg:UMapImportSettings, map_coll):
                         cam.display_size, cam.sensor_fit, cam.lens_unit = (0.5, 'HORIZONTAL', 'FOV')
                         cam.angle = math.radians(h_fov)
 
-                        obj = SetupObjectFull(export, cam)
+                        obj = SetupObjectFull(cfg, export, cam)
                         TryApplyRootComponent(export, obj, 90)
                 case 'Actor':
                     export.ReadProperties(False)
-                    obj = SetupObjectFull(export)
+                    obj = SetupObjectFull(cfg, export)
                     TryApplyRootComponent(export, obj)
                 #case _: print(f"Skipping \"{export.export_class_type}\"")
         case 'BlueprintGeneratedClass':
             export.ReadProperties(True)
 
-            bp_obj = SetupObject(export.object_name)
+            bp_obj = SetupObjectFull(cfg, export)
             TryApplyRootComponent(export, bp_obj)
 
             if bp_comps := export.properties.TryGetValue('BlueprintCreatedComponents'):
@@ -214,47 +214,43 @@ def ProcessUMapExport(export:Export, cfg:UMapImportSettings, map_coll):
 
                 bp_path = export.export_class.import_ref.object_name
                 if bp_path.startswith("/Engine/"): return
-                bp_asset = export.asset.import_cache.get(bp_path)
-                if not bp_asset:
+                if not (bp_asset := export.asset.import_cache.get(bp_path)):
                     bp_asset = UAsset(export.asset.ToProjectPath(bp_path), False, export.asset.uproject)
                     bp_asset = bp_asset.__enter__()
-                    bp_asset.name2exp = {}
-                    for exp in bp_asset.exports: bp_asset.name2exp[exp.object_name] = exp
+                    bp_asset.EnsureIndexExports()
                     export.asset.import_cache[bp_path] = bp_asset
                 
                 for comp in bp_comps:
                     child_export = comp.value
                     #ProcessUMapExport(child_export) # TODO? Can't, need to partly process gend_exp & child_export
-                    if child_export.export_class_type == 'StaticMeshComponent':
+                    if child_export.export_class_type == 'StaticMeshComponent': # TODO: other components
                         gend_exp = bp_asset.name2exp.get(f"{child_export.object_name}_GEN_VARIABLE")
                         if gend_exp:
                             gend_exp.ReadProperties()
 
                             mesh = TryGetMesh(gend_exp, 'StaticMesh', cfg.materials) if cfg.meshes else None
-                            child_export.bl_obj = obj = SetupObject(child_export.object_name, mesh)
+                            child_export.bl_obj = obj = SetupObjectFull(cfg, child_export, mesh)
 
-                            if attach := child_export.properties.TryGetValue('AttachParent'): # TODO: unify?
-                                assert hasattr(attach, 'bl_obj')
-                                obj.parent = attach.bl_obj
-
+                            Parent(child_export, obj)
                             Transform(gend_exp, obj)
 def LoadUMap(filepath, cfg=UMapImportSettings()):
     t0 = time.time()
 
-    obj_count = len(bpy.data.objects)
-    mesh_count = len(bpy.data.meshes)
-    mat_count = len(bpy.data.materials)
+    obj_count   = len(bpy.data.objects)
+    mesh_count  = len(bpy.data.meshes)
+    mat_count   = len(bpy.data.materials)
     light_count = len(bpy.data.lights)
 
     with UAsset(filepath) as asset:
         bpy.context.window_manager.progress_begin(0, len(asset.exports))
 
-        map_coll = bpy.data.collections.new(os.path.splitext(os.path.basename(filepath))[0])
-        bpy.context.scene.collection.children.link(map_coll)
-        bpy.context.view_layer.active_layer_collection = bpy.context.view_layer.layer_collection.children[map_coll.name]
+        if cfg.folders:
+            map_coll = bpy.data.collections.new(os.path.splitext(os.path.basename(filepath))[0])
+            bpy.context.scene.collection.children.link(map_coll)
+            bpy.context.view_layer.active_layer_collection = bpy.context.view_layer.layer_collection.children[map_coll.name]
 
         for i, export in enumerate(asset.exports):
-            ProcessUMapExport(export, cfg, map_coll)
+            ProcessUMapExport(export, cfg)
             bpy.context.window_manager.progress_update(i)
         bpy.context.window_manager.progress_end()
     if hasattr(asset, 'import_cache'):
@@ -273,6 +269,7 @@ class ImportUMap(bpy.types.Operator, ImportHelper):
     files:       CollectionProperty(type=bpy.types.OperatorFileListElement, options={'HIDDEN','SKIP_SAVE'})
     directory:   StringProperty(options={'HIDDEN'})
 
+    folders:          BoolProperty(name="Collections",        default=True, description="Object heirarchy folders.")
     meshes:           BoolProperty(name="Meshes",             default=True, description="Static and Skeletal Meshes.")
     materials:        BoolProperty(name="Materials",          default=True, description="Mesh Materials (slowest part).")
     cameras:          BoolProperty(name="Cameras",            default=True)
@@ -288,8 +285,8 @@ class ImportUMap(bpy.types.Operator, ImportHelper):
     def execute(self, context):
         for file in self.files:
             if file.name != "":
-                cfg = UMapImportSettings(self.meshes, self.materials, self.cameras, self.lights_point, self.lights_spot, self.lights_dir, 
-                                   self.cubemaps, self.lightprobes, self.force_shadows, self.light_intensity, self.light_angle_coef)
+                cfg = UMapImportSettings(self.folders, self.meshes, self.materials, self.cameras, self.lights_point, self.lights_spot, self.lights_dir, 
+                                         self.cubemaps, self.lightprobes, self.force_shadows, self.light_intensity, self.light_angle_coef)
                 LoadUMap(self.directory + file.name, cfg)
         return {'FINISHED'}
 
@@ -314,13 +311,13 @@ if __name__ != "umap":
     #LoadUMap(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary.umap")
     #LoadUMap(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Overview.umap")
     #LoadUMap(r"F:\Projects\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary_2.umap")
-    #LoadUMap(r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary.umap")
+    LoadUMap(r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary.umap")
     #LoadUMap(r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\ModSci_Engineer\Maps\Example_Stationary_427.umap")
     #LoadUMap(r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\FPS_Weapon_Bundle\Maps\Weapons_Showcase.umap")
     #LoadUMap(r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\StarterBundle\ModularScifiProps\Maps\Promo.umap")
     #LoadUMap(r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\StarterBundle\ModularScifiProps\Maps\Overview_Props.umap")
     #LoadUMap(r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\StarterBundle\CollectionMaps\Map1.umap")
-    LoadUMap(r"C:/Users/jdeacutis/Documents/Unreal Projects/Assets/Content/Military_VOL3_Checkpoint/Maps/Demonstration.umap")
+    #LoadUMap(r"C:/Users/jdeacutis/Documents/Unreal Projects/Assets/Content/Military_VOL3_Checkpoint/Maps/Demonstration.umap")
     
     #print(dict(sorted(uasset.struct_counts.items(), key=lambda item: item[1])))
     print("Done")

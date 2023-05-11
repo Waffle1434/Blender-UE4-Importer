@@ -478,7 +478,11 @@ class UAsset:
         if path.startswith("/Game/"): return os.path.join(self.uproject.dir, "Content", path[6:]) + ".uasset"
         elif path.startswith("/Engine/"): return os.path.join(self.uproject.engine_dir, "Content", path[8:]) + ".uasset"
         else: raise
-        
+    def EnsureIndexExports(self):
+        if not hasattr(self, 'name2exp'):
+            self.name2exp = {}
+            for exp in self.exports: self.name2exp[exp.object_name] = exp
+
     def TryReadPropertyGuid(self) -> uuid.UUID: return self.f.ReadGuid() if self.summary.version_ue4 >= 503 and self.f.ReadBool() else None
     #def TryReadProperty(self): # TODO
     def Read(self, read_all=True, log=False): # PackageReader.cpp
