@@ -1,7 +1,9 @@
+[![discord](https://badgen.net/badge/icon/discord?icon=discord&label)](https://discord.gg/wUQKNu7dVQ)
 # Blender UE4 Importer
-Blender addon to import Unreal Engine 4 asset files.
-![image](https://github.com/Waffle1434/Blender-UE4-Importer/assets/8021358/e66bc6b7-86f0-4ee9-9b57-785949ffba7e)
-![import_umesh](https://github.com/Waffle1434/Blender-UE4-Importer/assets/8021358/7c3ff2e9-4b26-4aa8-b63b-26b4590193d3)
+Blender addon to import Unreal Engine 4 asset files. [Download the latest release](https://github.com/Waffle1434/Blender-UE4-Importer/releases/latest).
+
+![image](https://github.com/Waffle1434/Blender-UE4-Importer/assets/8021358/cc2a6f1a-957f-47ad-8f1b-ccce553deb89)
+![import_umesh](https://github.com/Waffle1434/Blender-UE4-Importer/assets/8021358/a46d7258-902c-45dc-8d0e-00f106bc34b0)
 
 ## Features
 - Directly reads Unreal Engine project files, no exporting in Unreal Editor required
@@ -19,9 +21,11 @@ Blender addon to import Unreal Engine 4 asset files.
 | 4.27 | ✔️ | ✔️ | ⚠️ | ✔️ | ✔️ | ❌ | ❌ |
 | 5 | ❓ | ❓ | ❓ | ❓ | ❓ | ❌ | ❌ |
 
-Most testing has been performed on Unreal Engine 4.27 using free assets from the asset store. Unreal Engine 5 *might* work but its completely untested. If something isn't importing, I may be able to support it if you send a copy.
-
-Due to their complexity, materials are the most likely to fail to import. The importer will attempt to power through, but nodes may be missing or materials left unassigned.
+## Known Issues
+- Most testing has been performed on Unreal Engine 4.27 using free assets from the asset store. Unreal Engine 5 *might* work but its completely untested. If something isn't importing, I may be able to support it if you send a copy.
+- Due to their complexity, materials are the most likely to fail to import. The importer will attempt to power through, but nodes may be missing or materials left unassigned.
+- Skeletal meshes import as rigid meshes. I am *this* close to having skinning working, but I haven't figured out how to correctly correspond the vertex groups from the uasset.
+- BSP and terrain is MIA, I may support this if requested enough.
 
 ## UMap Support
 | Element | Support | Notes |
