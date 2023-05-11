@@ -167,7 +167,7 @@ UE2BlenderNode_dict = {
     'MaterialExpressionFunctionOutput'    : UE2BlenderNodeMapping('NodeReroute', hide=False, width=None, inputs={'A':0}),
 }
 ue_to_bl_type = { 'FunctionInput_Scalar':'NodeSocketFloat', 'FunctionInput_StaticBool':'NodeSocketFloat' }
-class_blacklist = { 'SceneThumbnailInfoWithPrimitive', 'MetaData', 'MaterialExpressionPanner' }
+class_blacklist = { 'SceneThumbnailInfoWithPrimitive', 'MetaData', 'MaterialExpressionPanner', 'MaterialExpressionBumpOffset', 'MaterialExpressionLightmassReplace' }
 material_classes = { 'Material', 'MaterialInstanceConstant' }
 node_whitelist = { 'ShaderNodeBsdfPrincipled', 'ShaderNodeOutputMaterial' }
 
@@ -264,10 +264,11 @@ def CreateNode(exp:Export, node_tree, nodes_data:dict[str,NodeData], graph_data:
 
     if classname in class_blacklist: return None # TODO: iterate material expression array instead?
 
-    if classname == 'MaterialExpressionMaterialFunctionCall': # TODO: import subtree from unreal directory
+    if classname == 'MaterialExpressionMaterialFunctionCall':
         matfnc_imp = params.TryGetValue('MaterialFunction')
         classname = matfnc_imp.object_name
-        if classname not in UE2BlenderNode_dict:
+        mapping = UE2BlenderNode_dict.get(classname)
+        if not mapping or (mapping.bl_idname == 'ShaderNodeGroup' and mapping.subtype not in bpy.data.node_groups):
             matfnc_subtype = ImportMaterialFunction(matfnc_imp)
             node_group = bpy.data.node_groups[matfnc_subtype]
             input_count = len(node_group.inputs)

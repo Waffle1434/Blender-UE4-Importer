@@ -65,7 +65,7 @@ def ReadMeshBulkData(self:Export, asset:UAsset, f:uasset.ByteStream): # FByteBul
         assert asset.summary.compression_flags == 0
         f.Seek(bulk.offset)
 
-        if bulk.flags & (0x02 | 0x10 | 0x80): raise # CompressedZlib | CompressedLzo | CompressedLzx
+        if bulk.flags & (0x02 | 0x10 | 0x80): raise Exception("CompressedZlib | CompressedLzo | CompressedLzx Unsupported")
         
         # FRawMesh
         version, version_licensee = (f.ReadInt32(), f.ReadInt32())
