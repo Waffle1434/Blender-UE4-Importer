@@ -41,6 +41,7 @@ def TryGetExtractedImport(imp:Import, extract_dir):
                         export.ReadProperties(False)
                         tex.colorspace_settings.name = 'sRGB' if export.properties.TryGetValue('SRGB',True) else 'Non-Color'
                         tex['flip_y'] = export.properties.TryGetValue('bFlipGreenChannel',False)
+                        tex['clamp'] = export.properties.TryGetValue('AddressX', 'TA_Wrap') == 'TA_Clamp' and export.properties.TryGetValue('AddressY', 'TA_Wrap') == 'TA_Clamp'
                         break
         except: imp.extracted = None
     return imp.extracted
@@ -408,6 +409,8 @@ def LinkSockets(node_tree, nodes_data:dict[str,NodeData], node_data:NodeData):
                             for i, elem in enumerate(expr.value): TryLinkSocket(node_tree, nodes_data, node_data, elem['Input'], i, map_val[i])
 def SetNodeTexture(node, image):
     node.image = image
+    if image.get('clamp', False): node.extension = 'CLIP'
+
     links = node.outputs['Color'].links
     if len(links) > 0:
         linked_node = links[0].to_node
@@ -578,6 +581,7 @@ if __name__ != "umat":
     #filepath = r"C:/Users/jdeacutis/Documents/Unreal Projects/Assets/Content/StarterBundle/UE4_Assets/Environment_B/Materials/M_BigSnow.uasset"
     #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\Military_VOL5_Devices\Materials\MI_Mortar_02a.uasset"
     #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\Military_VOL3_Checkpoint\Materials\MI_Sandbags_02a.uasset"
-    filepath = r"C:/Users/jdeacutis/Documents/Unreal Projects/Assets/Content/Military_VOL3_Checkpoint/Materials/MI_Barbed_Wire_Stop_01a.uasset"
+    #filepath = r"C:/Users/jdeacutis/Documents/Unreal Projects/Assets/Content/Military_VOL3_Checkpoint/Materials/MI_Barbed_Wire_Stop_01a.uasset"
+    filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\FPS_Weapon_Bundle\Weapons\Materials\Master_Material\M_RDS_Master.uasset"
     ImportNodeGraph(filepath)
     print("Done")
