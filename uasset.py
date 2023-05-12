@@ -102,6 +102,7 @@ class FIntPoint(PrintableStruct): _fields_ = ( ('x', c_int), ('y', c_int) )
 class FQuat(PrintableStruct):
     _fields_ = ( ('x', c_float), ('y', c_float), ('z', c_float), ('w', c_float) )
     def __str__(self): return StructToString(self, False)
+    def ToEuler(self): return Quaternion((self.x, self.y, self.z, self.w)).to_euler('YXZ')
 class FTransform(PrintableStruct): _fields_ = ( ('rotation', FQuat), ('translation', FVector), ('scale', FVector) )
 class FColor(PrintableStruct): _fields_ = ( ('b', c_ubyte), ('g', c_ubyte), ('r', c_ubyte), ('a', c_ubyte) )
 class FLinearColor(PrintableStruct):
@@ -122,7 +123,7 @@ prop_table_types = { "ExpressionOutput", "ScalarParameterValue", "TextureParamet
                     "KConvexElem", "Transform", "StaticMeshSourceModel", "MeshBuildSettings", "MeshReductionSettings", "MeshUVChannelInfo", "AssetEditorOrbitCameraPosition", "SimpleMemberReference", 
                     "CollisionResponse", "ResponseChannel", "StreamingTextureBuildInfo", "BuilderPoly", "PostProcessSettings", "LevelViewportInfo", "MaterialProxySettings", "MeshProxySettings",
                     "MeshMergingSettings", "HierarchicalSimplification", "Timeline", "TimelineFloatTrack", "ParameterGroupData", "MaterialParameterInfo", "MaterialInstanceBasePropertyOverrides", 
-                    "MaterialCachedExpressionData" }
+                    "MaterialCachedExpressionData", "BoneNode" }
 prop_table_blacklist = { "MaterialTextureInfo" }
 struct_map = { "Vector":FVector, "Rotator":FVector, "Vector4":FVector4, "IntPoint":FIntPoint, "Quat":FQuat, "Box":FBox, "Color":FColor, "LinearColor":FLinearColor, "BoxSphereBounds":FBoxSphereBounds }
 temp_struct_blacklist = set()
@@ -339,6 +340,7 @@ class UProperty:
                     self.value = []
                     next = f.Position() + self.array_size
                     try:
+                        assert self.array_size % element_count == 0
                         element_size = int(self.array_size / element_count)
                         single_prop = self.array_el_full_type not in ("FunctionExpressionInput","FunctionExpressionOutput")
                         for i in range(element_count):
@@ -393,7 +395,7 @@ class UProperty:
                 if header:
                     self.key_type = f.ReadFName(asset.names)
                     self.value_type = f.ReadFName(asset.names)
-            case "TextProperty" | "MulticastSparseDelegateProperty" | "DelegateProperty":
+            case "TextProperty" | "MulticastSparseDelegateProperty" | "DelegateProperty" | "AssetObjectProperty":
                 if header: self.guid = asset.TryReadPropertyGuid()
                 self.value = [x for x in f.ReadBytes(self.len)]
             case _: raise Exception(f"Uknown Property Type \"{self.type}\"")

@@ -215,7 +215,22 @@ def ImportStaticMesh(self:Export, import_materials=True, log=True):
 def ImportSkeletalMesh(self:Export, import_materials=True, o=None):
     asset = self.asset
     f = asset.f
+    collection = bpy.context.collection
     self.ReadProperties(False, False)
+
+    if sk := self.properties.TryGetValue('Skeleton'):
+        '''sk_path = asset.ToProjectPath(sk.import_ref.object_name)
+        with UAsset(sk_path) as sk_asset:
+            for export in sk_asset.exports:
+                match export.export_class_type:
+                    case 'Skeleton':
+                        export.ReadProperties(True)
+                        if bone_tree := export.properties.TryGetValue('BoneTree'):
+                            pass'''
+        armature = bpy.data.armatures.new(sk.object_name)
+        armature_obj = bpy.data.objects.new(armature.name, armature)
+        collection.objects.link(armature_obj)
+
     if f.ReadInt32(): self.guid = f.ReadGuid()
 
     strip_flags = ReadStripFlags(f, asset.summary)
@@ -239,30 +254,67 @@ def ImportSkeletalMesh(self:Export, import_materials=True, o=None):
         assert v_ren < 10 # TextureStreamingMeshUVChannelData
 
     # FReferenceSkeleton
-
     #ref_bone_info = # TArray<FMeshBoneInfo>
     ref_bone_info = []
     for i in range(f.ReadInt32()):
         name, i_parent = (f.ReadFName(asset.names), f.ReadInt32())
+        assert i_parent >= -1
         if asset.summary.version_ue4 < 310: color = f.ReadStructure(FColor) # VER_UE4_REFERENCE_SKELETON_REFACTOR
         if asset.summary.version_ue4 >= 370: export_name = f.ReadFString() # VER_UE4_STORE_BONE_EXPORT_NAMES
         ref_bone_info.append((name, i_parent))
 
     ref_bone_pose:list[uasset.FTransform] = f.ReadArray(uasset.FTransform) # TArray<FTransform>
+
+    bpy.context.view_layer.objects.active = armature_obj
+    armature_obj.select_set(True)
+    armature.show_names = True
+    armature_obj.show_in_front = True
+    bpy.ops.object.mode_set(mode='EDIT')
+    for i in range(len(ref_bone_info)) :
+        name, i_parent = ref_bone_info[i]
+        bone = armature.edit_bones.new(name)
+        transform = ref_bone_pose[i]
+
+        euler = transform.rotation.ToEuler()
+        #euler = Euler((0,0,0), 'YXZ')
+        euler = Euler((-euler.x, -euler.z, -euler.y), 'YXZ')
+        print(f"{i} {name} {euler}")
+
+        #bone.head = transform.translation.ToVectorPos() * 0.01
+        #bone.head = transform.translation.ToVector() * 0.01
+        #bone.tail = bone.head + Vector((0, 0, 0.1))
+
+        matrix = Matrix.LocRotScale(transform.translation.ToVectorPos() * 0.01, euler, transform.scale.ToVector())
+        #bone.head = matrix @ Vector((0,0,0))
+        #bone.tail = matrix @ Vector((0.01,0,0))
+
+        if i_parent != -1:
+            bone.parent = armature.edit_bones[i_parent]
+            #matrix = matrix @ bone.parent.matrix
+            matrix = bone.parent.matrix @ matrix
+
+        bone.head = (0,0,0)
+        bone.tail = (0.01,0,0)
+        #bone.tail = (0,0.01,0)
+        bone.matrix = matrix
+    bpy.ops.object.mode_set(mode='OBJECT')
     
     index_to_name = {}
     if asset.summary.version_ue4 >= 310: # VER_UE4_REFERENCE_SKELETON_REFACTOR
         for i in range(f.ReadInt32()):
             key, value = ( f.ReadFName(asset.names), f.ReadInt32() )
-            print(f"{value} {key}")
             index_to_name[value] = key
+            #print(f"{value} {key}")
     else:
         for i in range(len(ref_bone_info)): index_to_name[i] = ref_bone_info[i][0]
 
     mesh = bpy.data.meshes.new(self.object_name) # TODO: oy vey, static mesh doesn't have to create an object
     mesh.name = self.object_name
     o = bpy.data.objects.new(mesh.name, mesh)
-    bpy.context.collection.objects.link(o)
+    collection.objects.link(o)
+
+    modifier = o.modifiers.new("Skeleton", 'ARMATURE')
+    modifier.object = armature_obj
 
     bone_groups:list[bpy.types.VertexGroup] = []
     for i in sorted(index_to_name): bone_groups.append(o.vertex_groups.new(name=index_to_name[i]))
@@ -307,8 +359,10 @@ def ImportSkeletalMesh(self:Export, import_materials=True, o=None):
 
             assert not (asset.summary.compatible_version.major >= 4 and asset.summary.compatible_version.minor >= 20), "Handle packed normals"
 
+            chunks = None
             if v_skel < 1: # CombineSectionWithChunk
                 # TArray<FSkelMeshChunk4> Chunks
+                chunks = []
                 for i_chunk in range(f.ReadInt32()):
                     strip_flags = ReadStripFlags(f, asset.summary)
                     if not strip_flags.StripForServer(): base_vert_i = f.ReadInt32()
@@ -330,6 +384,7 @@ def ImportSkeletalMesh(self:Export, import_materials=True, o=None):
                         cloth_mappings, physical_mesh_verts, physical_mesh_norms = (f.ReadArray(FApexClothPhysToRenderVertData), f.ReadArray(FVector), f.ReadArray(FVector))
                         cloth_asset_i, cloth_submesh_i = (f.ReadInt16(), f.ReadInt16())
                         has_cloth_data |= len(cloth_mappings) > 0
+                    chunks.append((rigid_vert_c, soft_vert_c, bone_map))
             
             lod_size = f.ReadInt32()
             if not lod_strip_flags.StripForServer(): vert_c = f.ReadInt32()
@@ -422,10 +477,12 @@ def ImportSkeletalMesh(self:Export, import_materials=True, o=None):
             for poly in mesh.polygons: poly.use_smooth = True
 
             i_vert = 0
-            for bone_indices, bone_weights in vert_weights:
-                for i_w in range(skel_infl_c):
-                    bone_groups[bone_indices[i_w]].add((i_vert,), bone_weights[i_w] / 255, 'REPLACE')
-                i_vert += 1
+            for rigid_vert_c, soft_vert_c, bone_map in chunks:
+                for i in range(rigid_vert_c + soft_vert_c):
+                    bone_indices, bone_weights = vert_weights[i_vert]
+                    for i_w in range(skel_infl_c):
+                        bone_groups[bone_map[bone_indices[i_w]]].add((i_vert,), bone_weights[i_w] / 255, 'REPLACE')
+                    i_vert += 1
 
             if import_materials:
                 for mat_imp in materials:
@@ -488,12 +545,12 @@ if __name__ != "umesh":
     #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\VehicleVarietyPack\Meshes\SM_Truck_Box.uasset"
     #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\ConstructionMachines\WheelLoader\SM_WheelLoader.uasset"
     #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\FPS_Weapon_Bundle\Weapons\Meshes\Accessories\SM_Scope_25x56_X.uasset"
-    #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\FPS_Weapon_Bundle\Weapons\Meshes\KA74U\SK_KA74U_X.uasset"
+    filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\FPS_Weapon_Bundle\Weapons\Meshes\KA74U\SK_KA74U_X.uasset"
     #filepath = r"F:\Projects\Unreal Projects\Assets\Content\FPS_Weapon_Bundle\Weapons\Meshes\KA74U\SK_KA74U_X.uasset"
     #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\FPS_Weapon_Bundle\Weapons\Meshes\SMG11\SK_SMG11_Nostock_Y.uasset"
     #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\StarterBundle/ModularSci_Comm/Meshes/SM_Windows_A_Glass.uasset"
     #filepath = r"C:\Users\jdeacutis\Documents\Unreal Projects\Assets\Content\Military_VOL5_Devices\Meshes\SM_Generator_01d.uasset"
-    filepath = r"C:/Users/jdeacutis/Documents/Unreal Projects/Assets/Content/Military_VOL3_Checkpoint/Meshes/SM_Sandbags_02a.uasset"
+    #filepath = r"C:/Users/jdeacutis/Documents/Unreal Projects/Assets/Content/Military_VOL3_Checkpoint/Meshes/SM_Sandbags_02a.uasset"
 
     ImportUMeshAsObject(filepath)
 
