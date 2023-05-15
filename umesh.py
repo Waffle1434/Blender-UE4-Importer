@@ -218,18 +218,10 @@ def ImportSkeletalMesh(self:Export, import_materials=True, o=None):
     collection = bpy.context.collection
     self.ReadProperties(False, False)
 
-    if sk := self.properties.TryGetValue('Skeleton'):
-        '''sk_path = asset.ToProjectPath(sk.import_ref.object_name)
-        with UAsset(sk_path) as sk_asset:
-            for export in sk_asset.exports:
-                match export.export_class_type:
-                    case 'Skeleton':
-                        export.ReadProperties(True)
-                        if bone_tree := export.properties.TryGetValue('BoneTree'):
-                            pass'''
+    '''if sk := self.properties.TryGetValue('Skeleton'):
         armature = bpy.data.armatures.new(sk.object_name)
         armature_obj = bpy.data.objects.new(armature.name, armature)
-        collection.objects.link(armature_obj)
+        collection.objects.link(armature_obj)'''
 
     if f.ReadInt32(): self.guid = f.ReadGuid()
 
@@ -265,7 +257,7 @@ def ImportSkeletalMesh(self:Export, import_materials=True, o=None):
 
     ref_bone_pose:list[uasset.FTransform] = f.ReadArray(uasset.FTransform) # TArray<FTransform>
 
-    bpy.context.view_layer.objects.active = armature_obj
+    '''bpy.context.view_layer.objects.active = armature_obj
     armature_obj.select_set(True)
     armature.show_names = True
     armature_obj.show_in_front = True
@@ -297,7 +289,7 @@ def ImportSkeletalMesh(self:Export, import_materials=True, o=None):
         bone.tail = (0.01,0,0)
         #bone.tail = (0,0.01,0)
         bone.matrix = matrix
-    bpy.ops.object.mode_set(mode='OBJECT')
+    bpy.ops.object.mode_set(mode='OBJECT')'''
     
     index_to_name = {}
     if asset.summary.version_ue4 >= 310: # VER_UE4_REFERENCE_SKELETON_REFACTOR
@@ -313,8 +305,8 @@ def ImportSkeletalMesh(self:Export, import_materials=True, o=None):
     o = bpy.data.objects.new(mesh.name, mesh)
     collection.objects.link(o)
 
-    modifier = o.modifiers.new("Skeleton", 'ARMATURE')
-    modifier.object = armature_obj
+    #modifier = o.modifiers.new("Skeleton", 'ARMATURE')
+    #modifier.object = armature_obj
 
     bone_groups:list[bpy.types.VertexGroup] = []
     for i in sorted(index_to_name): bone_groups.append(o.vertex_groups.new(name=index_to_name[i]))
