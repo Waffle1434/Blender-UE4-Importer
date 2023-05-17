@@ -15,16 +15,17 @@ Blender addon to import Unreal Engine 4 asset files. [Download the latest releas
 - [umodel.exe](https://www.gildor.org/en/projects/umodel) for texture extraction
 - Normal map format correction
 
-| Engine | UMap | Static Mesh | Skeletal Mesh | Material | Material Instance | Skeleton | Animation |
+| Saved with Engine | UMap | Static Mesh | Skeletal Mesh | Material | Material Instance | Skeleton | Animation |
 | :--- | :--: | :--: | :--: | :--: | :--: | :--: | :--: |
 | 4.16 | ✔️ | ✔️ | ⚠️ | ✔️ | ✔️ | ❌ | ❌ |
 | 4.27 | ✔️ | ✔️ | ⚠️ | ✔️ | ✔️ | ❌ | ❌ |
 | 5 | ❓ | ❓ | ❓ | ❓ | ❓ | ❌ | ❌ |
 
 ## Known Issues
-- Most testing has been performed on Unreal Engine 4.27 using free assets from the asset store. Unreal Engine 5 *might* work but its completely untested. If something isn't importing, I may be able to support it if you send a copy.
+- Unreal's binary files are a painful history of microchanges that lead to tons of branching paths that need to be supported. I might be fighting a losing battle. It is particularly hard for me to follow Unreal's source code, I can't promise anything in the future.
+- Most testing has been performed on Unreal Engine 4.27 using free assets from the asset store. Assets saved with UE5 *might* work, but its unlikely. UE4 assets should still import into Blender from UE5 projects. If something isn't importing, I might be able to support it if you send a copy.
 - Due to their complexity, materials are the most likely to fail to import. The importer will attempt to power through, but nodes may be missing or materials left unassigned.
-- Skeletal meshes import as rigid meshes. I am *this* close to having skinning working, but I haven't figured out how to correctly correspond the vertex groups from the uasset.
+- Skeletal meshes import as rigid meshes. The vertex groups are correct, getting the correct orientation of the bones is tripping me up so I'm excluding the armature for now.
 - BSP and terrain is MIA, I may support this if requested enough.
 
 ## UMap Support
