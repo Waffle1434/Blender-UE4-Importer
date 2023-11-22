@@ -1,4 +1,3 @@
-[![discord](https://badgen.net/badge/icon/discord?icon=discord&label)](https://discord.gg/wUQKNu7dVQ)
 # Blender UE4 Importer
 Blender addon to import Unreal Engine 4 asset files. [Download the latest release](https://github.com/Waffle1434/Blender-UE4-Importer/releases/latest).
 
